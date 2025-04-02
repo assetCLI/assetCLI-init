@@ -1,12 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { ConnectionService } from "../services/connection-service";
-import { WalletService } from "../services/wallet-service";
-import { ConfigService } from "../services/config-service";
 import { ProposalService } from "../services/proposal-service";
 import { GovernanceService } from "../services/governance-service";
 import { ProposalV2 } from "governance-idl-sdk";
+import { useMcpContext } from "../utils/mcp-hooks";
 
 export function registerProposalTools(server: McpServer) {
   server.tool(
@@ -21,65 +19,20 @@ export function registerProposalTools(server: McpServer) {
     },
     async ({ name, description, amount, mint, recipient }) => {
       try {
-        // Load wallet and connection
-        const walletRes = await WalletService.loadWallet();
-        if (!walletRes.success || !walletRes.data) {
+        const context = await useMcpContext({
+          requireWallet: true,
+          requireDao: true,
+        });
+
+        if (!context.success) {
           return {
             content: [
-              {
-                type: "text",
-                text: "No wallet configured. Please create a wallet first.",
-              },
+              { type: "text", text: context.error || "Failed to get context" },
             ],
           };
         }
 
-        // Check config
-        const configRes = await ConfigService.getConfig();
-        if (
-          !configRes.success ||
-          !configRes.data ||
-          !configRes.data.dao?.activeRealm
-        ) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "No DAO configured. Use useDao to select one.",
-              },
-            ],
-          };
-        }
-
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
-          return {
-            content: [{ type: "text", text: "Failed to establish connection" }],
-          };
-        }
-
-        const connection = connectionRes.data;
-        const keypair = WalletService.getKeypair(walletRes.data);
-        const realmAddress = new PublicKey(configRes.data.dao.activeRealm);
-
-        // Get DAO type (integrated or standard)
-        const realmInfoRes = await GovernanceService.getRealmInfo(
-          connection,
-          realmAddress
-        );
-        if (!realmInfoRes.success || !realmInfoRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
-              },
-            ],
-          };
-        }
-
-        const realmInfo = realmInfoRes.data;
-        const isIntegrated = realmInfo.isIntegrated;
+        const { connection, keypair, realmAddress } = context;
 
         // Parse recipient
         let recipientAddress: PublicKey;
@@ -102,6 +55,26 @@ export function registerProposalTools(server: McpServer) {
             ],
           };
         }
+
+        // Get DAO type (integrated or standard)
+        const realmInfoRes = await GovernanceService.getRealmInfo(
+          connection,
+          realmAddress!
+        );
+
+        if (!realmInfoRes.success || !realmInfoRes.data) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
+              },
+            ],
+          };
+        }
+
+        const realmInfo = realmInfoRes.data;
+        const isIntegrated = realmInfo.isIntegrated;
 
         // Check balance of the source account
         let sourceAddress: PublicKey;
@@ -159,7 +132,7 @@ export function registerProposalTools(server: McpServer) {
               await ProposalService.createIntegratedAssetTransferProposal(
                 connection,
                 keypair,
-                realmAddress,
+                realmAddress!,
                 name,
                 description,
                 instructionsRes.data
@@ -167,7 +140,7 @@ export function registerProposalTools(server: McpServer) {
           } else {
             instructionsRes = await ProposalService.getTokenTransferInstruction(
               connection,
-              realmAddress,
+              realmAddress!,
               tokenMint,
               amount,
               recipientAddress
@@ -187,7 +160,7 @@ export function registerProposalTools(server: McpServer) {
             proposalAddressRes = await ProposalService.createProposal(
               connection,
               keypair,
-              realmAddress,
+              realmAddress!,
               name,
               description,
               instructionsRes.data
@@ -220,7 +193,7 @@ export function registerProposalTools(server: McpServer) {
               await ProposalService.createIntegratedAssetTransferProposal(
                 connection,
                 keypair,
-                realmAddress,
+                realmAddress!,
                 name,
                 description,
                 [transferIxRes.data]
@@ -230,7 +203,7 @@ export function registerProposalTools(server: McpServer) {
             const transferIxRes =
               await ProposalService.getSolTransferInstruction(
                 connection,
-                realmAddress,
+                realmAddress!,
                 amount,
                 recipientAddress
               );
@@ -249,7 +222,7 @@ export function registerProposalTools(server: McpServer) {
             proposalAddressRes = await ProposalService.createProposal(
               connection,
               keypair,
-              realmAddress,
+              realmAddress!,
               name,
               description,
               [transferIxRes.data]
@@ -301,46 +274,20 @@ export function registerProposalTools(server: McpServer) {
     },
     async ({ proposal, approve }) => {
       try {
-        // Load wallet and connection
-        const walletRes = await WalletService.loadWallet();
-        if (!walletRes.success || !walletRes.data) {
+        const context = await useMcpContext({
+          requireWallet: true,
+          requireDao: true,
+        });
+
+        if (!context.success) {
           return {
             content: [
-              {
-                type: "text",
-                text: "No wallet configured. Please create a wallet first.",
-              },
+              { type: "text", text: context.error || "Failed to get context" },
             ],
           };
         }
 
-        // Check config
-        const configRes = await ConfigService.getConfig();
-        if (
-          !configRes.success ||
-          !configRes.data ||
-          !configRes.data.dao?.activeRealm
-        ) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "No DAO configured. Use useDao to select one.",
-              },
-            ],
-          };
-        }
-
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
-          return {
-            content: [{ type: "text", text: "Failed to establish connection" }],
-          };
-        }
-
-        const connection = connectionRes.data;
-        const keypair = WalletService.getKeypair(walletRes.data);
-        const realmAddress = new PublicKey(configRes.data.dao.activeRealm);
+        const { connection, keypair, realmAddress } = context;
 
         // Parse proposal address
         let proposalAddress: PublicKey;
@@ -356,7 +303,7 @@ export function registerProposalTools(server: McpServer) {
         const voteRes = await ProposalService.castVote(
           connection,
           keypair,
-          realmAddress,
+          realmAddress!,
           proposalAddress,
           approve
         );
@@ -400,28 +347,16 @@ export function registerProposalTools(server: McpServer) {
     },
     async ({ proposal }) => {
       try {
-        // Load wallet and connection
-        const walletRes = await WalletService.loadWallet();
-        if (!walletRes.success || !walletRes.data) {
+        const context = await useMcpContext({ requireWallet: true });
+        if (!context.success) {
           return {
             content: [
-              {
-                type: "text",
-                text: "No wallet configured. Please create a wallet first.",
-              },
+              { type: "text", text: context.error || "Failed to get context" },
             ],
           };
         }
 
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
-          return {
-            content: [{ type: "text", text: "Failed to establish connection" }],
-          };
-        }
-
-        const connection = connectionRes.data;
-        const keypair = WalletService.getKeypair(walletRes.data);
+        const { connection, keypair } = context;
 
         // Parse proposal address
         let proposalAddress: PublicKey;
@@ -479,50 +414,21 @@ export function registerProposalTools(server: McpServer) {
     },
     async ({ showAll, limit }) => {
       try {
-        // Load wallet and connection
-        const walletRes = await WalletService.loadWallet();
-        if (!walletRes.success || !walletRes.data) {
+        const context = await useMcpContext({ requireDao: true });
+        if (!context.success) {
           return {
             content: [
-              {
-                type: "text",
-                text: "No wallet configured. Please create a wallet first.",
-              },
+              { type: "text", text: context.error || "Failed to get context" },
             ],
           };
         }
 
-        // Check config
-        const configRes = await ConfigService.getConfig();
-        if (
-          !configRes.success ||
-          !configRes.data ||
-          !configRes.data.dao?.activeRealm
-        ) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "No DAO configured. Use useDao to select one.",
-              },
-            ],
-          };
-        }
-
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
-          return {
-            content: [{ type: "text", text: "Failed to establish connection" }],
-          };
-        }
-
-        const connection = connectionRes.data;
-        const realmAddress = new PublicKey(configRes.data.dao.activeRealm);
+        const { connection, realmAddress } = context;
 
         // Use the method in GovernanceService to fetch proposals for this realm
         const proposalRes = await GovernanceService.getProposalsForRealm(
           connection,
-          realmAddress
+          realmAddress!
         );
 
         if (!proposalRes.success || !proposalRes.data) {

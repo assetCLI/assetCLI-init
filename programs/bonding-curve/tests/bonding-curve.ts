@@ -92,10 +92,12 @@ describe("bonding-curve", () => {
   it("Initialize the bonding curve protocol", async () => {
     // Create the initialization parameters
     const params = {
-      initialVirtualTokenReserves: new anchor.BN(100_000_000_000_000),
+      // Using full token supply for virtual reserves
+      initialVirtualTokenReserves: new anchor.BN(100_000_000_000_000), // Full supply (100M)
       initialVirtualSolReserves: new anchor.BN(30_000_000_000),
-      initialRealTokenReserves: new anchor.BN(50_000_000_000_000),
-      tokenTotalSupply: new anchor.BN(100_000_000_000_000),
+      // Only 50% of tokens available for trading
+      initialRealTokenReserves: new anchor.BN(50_000_000_000_000), // 50% of supply (50M)
+      tokenTotalSupply: new anchor.BN(100_000_000_000_000), // Total supply (100M)
       mintDecimals: 6,
       migrateFeeAmount: new anchor.BN(500),
       feeReceiver: wallet.publicKey,
@@ -307,16 +309,22 @@ describe("bonding-curve", () => {
       "User should have received tokens"
     );
 
-    // Fetch the bonding curve to verify treasury allocation
+    // Fetch the bonding curve to verify state after buying
     const bondingCurve =
       await program.account.bondingCurve.fetch(bondingCurvePda);
-    console.log(
-      "Treasury allocation:",
-      bondingCurve.treasuryAllocation.toString()
-    );
+
+    // Remove treasury allocation check as that field is removed
     console.log(
       "Real token reserves:",
       bondingCurve.realTokenReserves.toString()
+    );
+    console.log(
+      "Virtual token reserves:",
+      bondingCurve.virtualTokenReserves.toString()
+    );
+    console.log(
+      "Virtual SOL reserves:",
+      bondingCurve.virtualSolReserves.toString()
     );
     console.log(
       "Token total supply:",
@@ -341,14 +349,7 @@ describe("bonding-curve", () => {
     console.log("Token account:", bondingCurveTokenAccount.toString());
     const realSolValue = await provider.connection.getBalance(bondingCurvePda);
     console.log("Real SOL value:", realSolValue / anchor.web3.LAMPORTS_PER_SOL);
-
-    assert.ok(
-      bondingCurve.treasuryAllocation.gt(new anchor.BN(0)),
-      "Treasury allocation should be tracked"
-    );
   });
-
-  // Update the "Sell tokens to the bonding curve" test to calculate a safer token amount
 
   it("Sell tokens to the bonding curve", async () => {
     const userTokenAccount = anchor.utils.token.associatedAddress({
@@ -449,13 +450,19 @@ describe("bonding-curve", () => {
       // Fetch the bonding curve data after sell
       const bondingCurveAfter =
         await program.account.bondingCurve.fetch(bondingCurvePda);
-      console.log(
-        "Treasury allocation after sell:",
-        bondingCurveAfter.treasuryAllocation.toString()
-      );
+
+      // Remove treasury allocation check as that field has been removed
       console.log(
         "SOL reserves after sell:",
         bondingCurveAfter.realSolReserves.toString()
+      );
+      console.log(
+        "Virtual SOL reserves after sell:",
+        bondingCurveAfter.virtualSolReserves.toString()
+      );
+      console.log(
+        "Virtual token reserves after sell:",
+        bondingCurveAfter.virtualTokenReserves.toString()
       );
     } catch (err) {
       console.error("Error during sell:", err);

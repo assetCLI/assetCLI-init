@@ -1,100 +1,95 @@
 # Next-Gen Asset CLI: Bonding Curve Tokenomics
 
-## Updated Bonding Curve Mathematics
+## Token and SOL Allocation Model
 
-Our bonding curve implementation uses a constant product formula similar to AMMs but with important adjustments to manage treasury allocations properly:
+Our tokenomics model provides a balanced approach to token distribution and SOL allocation that maximizes both treasury funding and long-term liquidity.
+
+### Token Distribution
+
+- **Total Supply**: 100,000,000 tokens
+- **Allocation**:
+  - **Public Fair Launch**: 50% (50M tokens) - Immediately liquid & tradeable via bonding curve
+  - **Locked Reserves**: 20% (20M tokens) - Locked for future ecosystem development
+  - **DAO Treasury**: 20% (20M tokens) - Controlled by governance
+  - **Burned**: 10% (10M tokens) - For deflationary effect
+
+### SOL Allocation
+
+- **DAO Treasury**: 80% of all raised SOL goes directly to treasury
+- **Locked Liquidity**: 20% of raised SOL is used for:
+  - Split between Raydium AMM pool and bonding curve
+  - LP tokens are minted and locked for a predetermined period
+  - DAO governance controls LP tokens after lock period expires
+
+## Bonding Curve Mathematics
+
+Our bonding curve implementation uses a constant product formula with critical adjustments to account for treasury allocation:
 
 ### Core Formula
 
 - Constant product: `virtual_sol_reserves * virtual_token_reserves = k`
-- This formula ensures price increases as tokens are purchased
-- Pricing is fully deterministic based on reserves
+- **Key Insight**: Virtual token reserves include the full token supply (100M) from day one
+- This ensures pricing accurately reflects total eventual supply
 
 ### Treasury Allocation Management
 
-- 20% of all incoming SOL is allocated to treasury
-- **Critical Fix**: Treasury allocations are subtracted from virtual SOL reserves
+- 20% of incoming SOL is allocated to treasury
+- Treasury allocations are subtracted from virtual SOL reserves
 - This maintains the constant product invariant and prevents pricing errors
 
 ### Reserves Management
 
-- **Virtual Reserves**: Mathematical constructs used for pricing calculations
+- **Virtual Reserves**: Used for price calculations
   - Virtual SOL Reserves: Total SOL minus treasury allocations
-  - Virtual Token Reserves: Tokens available in the bonding curve
+  - Virtual Token Reserves: Represents the full token supply (not just tradable portion)
 - **Real Reserves**: Actual assets held in accounts
   - Real SOL Reserves: Total SOL held by bonding curve
-  - Real Token Reserves: Total tokens held by bonding curve
+  - Real Token Reserves: Tradable tokens held by bonding curve (50% of supply)
 
-### Selling Tokens
+## Implementation Flow
 
-- When users sell tokens, the treasury allocation is proportionally reduced
-- This ensures the constant product formula remains valid
-- Maximum withdrawal is capped to available (non-treasury) SOL
+### Initial Setup
 
-## Token Supply & Allocation
+1. Deploy bonding curve with:
+   - Virtual token reserves = 100,000,000,000,000 (full supply)
+   - Real token reserves = 50,000,000,000,000 (50% available for trading)
+   - Virtual SOL reserves = 30,000,000,000 (initial pricing parameter)
+   - Real SOL reserves = 0 (starting position)
 
-- **Total Supply**: 100,000,000 tokens
-- **Allocation**:
-  - Public Fair Launch (Bonding Curve): 50% (50M tokens) - immediately liquid & tradeable
-  - Liquidity Provision: 20% (20M tokens) - locked after migration
-  - DAO Treasury: 20% (20M tokens) - controlled by governance
-  - Burned: 10% (10M tokens) - for deflationary effect
+### Fair Launch Phase
 
-## Fair Launch Model
+1. Users can buy tokens using SOL:
 
-- **Public Fair Launch**: Instantly tradeable bonding curve for price discovery
-- **Always Liquid**: Participants can buy and sell anytime on the curve
-- **Fundraising Target**: Configurable SOL fundraising goal
-- **Token Supply Management**:
-  - When fundraising target is reached, remaining unsold tokens are burned
-  - This increases token scarcity and value for early participants
-- **Liquidity Migration**: Move to Raydium AMM with locked liquidity upon reaching target
-- **Treasury Control**: Funds remain in DAO treasury controlled by governance
-- **Custom Liquidity Locking**: Using our own bonding curve mechanism rather than external platforms
+   - SOL flows into bonding curve
+   - 20% of incoming SOL is tracked for treasury
+   - Users receive tokens from the 50% tradable supply
+   - Price increases according to constant product formula
 
-## Bonding Curve Implementation Details
+2. Users can sell tokens back to the curve:
+   - Tokens flow back to bonding curve
+   - Users receive SOL based on constant product formula
+   - Treasury allocation is proportionally reduced
 
-### Technical Parameters
-
-- Initial virtual SOL reserves: 30,000,000,000 lamports
-- Initial virtual token reserves: 100,000,000,000,000 (adjusted for decimals)
-- Real token reserves: 50,000,000,000,000 (50% of supply available for sale)
-- Token decimals: 6
-
-### Buy Operation
-
-1. User sends SOL to bonding curve
-2. 20% is allocated to treasury
-3. Virtual SOL reserves increase by 80% of the SOL amount
-4. Real SOL reserves increase by 100% of the SOL amount
-5. Token price is calculated based on the virtual reserves formula
-6. Tokens sent to user based on the calculated price
-
-### Sell Operation
-
-1. User sends tokens to bonding curve
-2. System calculates SOL return based on constant product formula
-3. Treasury allocation is reduced proportionally (20% of SOL returned)
-4. Real token reserves increase by 100% of tokens sent
-5. Virtual token reserves increase by 100% of tokens sent
-6. Virtual SOL reserves decrease by the amount returned to user
-7. Real SOL reserves decrease by the amount returned to user
-
-### Migration Triggers
-
-- Primary: SOL fundraising target reached (configurable)
-- Secondary: Target market cap reached (configurable)
-- Alternative: Fundraising time window expired (configurable, default 7 days)
-
-### Migration Process
+### Migration Phase (when fundraising target is reached)
 
 1. Calculate final bonding curve price
-2. Allocate treasury portion (20% of total SOL raised)
-3. Process remaining assets:
-   - Move liquidity to Raydium AMM pool at the final price
-   - Deploy custom liquidity locking mechanism
-4. Burn all unsold tokens
-5. Lock liquidity for predetermined period
+2. Transfer 80% of SOL to DAO treasury
+3. Split remaining 20% of SOL:
+   - Create Raydium AMM pool with portion of SOL and tokens
+   - Keep portion in bonding curve for continued liquidity
+   - Generate LP tokens and lock them
+4. Transfer 20% of token supply to DAO treasury
+5. Lock 20% of token supply in reserve contract
+6. Burn 10% of token supply
+7. Any unsold tokens from the tradable portion are also burned
+
+## Technical Parameters
+
+- Initial virtual SOL reserves: 30,000,000,000 lamports
+- Initial virtual token reserves: 100,000,000,000,000 (full supply with decimals)
+- Initial real token reserves: 50,000,000,000,000 (50% of supply)
+- Token decimals: 6
+- Lock duration for LP tokens: 180 days (configurable)
 
 ## CLI Command Examples
 
@@ -103,36 +98,42 @@ Our bonding curve implementation uses a constant product formula similar to AMMs
 assetCLI token setup-curve --type constant-product \
   --initial-virtual-sol 30000000000 \
   --initial-virtual-tokens 100000000000000 \
+  --real-token-reserves 50000000000000 \
   --treasury-allocation 20 \
   --always-liquid true
 
-# Check current bonding curve state
-assetCLI token curve-status
+# Set fundraising target
+assetCLI token set-target --sol-amount 1000 --time-window 7d
 
 # Set up migration parameters
-assetCLI token setup-migration --treasury-pct 20 --liquidity-lock-duration 180d
+assetCLI token setup-migration \
+  --treasury-sol-pct 80 \
+  --raydium-sol-pct 10 \
+  --curve-sol-pct 10 \
+  --lock-duration 180d \
+  --burn-pct 10 \
+  --dao-allocation-pct 20 \
+  --lock-reserves-pct 20
 
-# Force migration (if conditions met)
-assetCLI token execute-migration --burn-unsold true --lock-liquidity true
+# Check current state
+assetCLI token curve-status
+
+# Execute migration (when conditions met)
+assetCLI token execute-migration --burn-unsold true
 ```
+
+## Benefits of This Model
+
+1. **Price Stability**: Using full supply in virtual token reserves prevents price shock at migration
+2. **Fair Distribution**: Trading begins immediately, allowing early price discovery
+3. **Treasury Funding**: 80% of raised SOL goes directly to treasury for project development
+4. **Sustainable Liquidity**: 20% of raised SOL ensures continued trading after launch
+5. **Value Protection**: Burning 10% of supply creates scarcity and benefits holders
+6. **Governance Ready**: DAO receives 20% of token supply for protocol ownership
 
 ## Technical Considerations
 
-### Mathematical Integrity
-
-- The constant product formula must be preserved throughout all operations
-- Virtual reserves track the mathematically relevant amounts for pricing
-- Real reserves track the actual asset holdings
-
-### Security Measures
-
-- Circuit breakers to pause trading if price moves >10% in 5 minutes
-- Invariant checks ensuring virtual/real reserves remain consistent
-- Treasury allocation tracking with underflow protection
-
-### Advanced Curve Options
-
-- Future support for sigmoid curve with linear price floor:
-  `price = max(a / (1 + e^(-k * (supply - m))) + b, c + d * supply)`
-- Configurable parameters via governance proposals
-- Advanced price discovery mechanisms
+1. **Mathematical Integrity**: The constant product formula is preserved through all operations
+2. **LP Security**: LP tokens are locked to prevent immediate liquidity removal
+3. **Compounding Effect**: Burning unsold tokens increases the relative value of all tokens
+4. **Price Continuity**: Trading can continue without interruption through migration

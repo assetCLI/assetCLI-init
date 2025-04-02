@@ -7,9 +7,9 @@ import {
   getOrCreateAssociatedTokenAccount,
   mintTo,
 } from "@solana/spl-token";
-import { WalletService } from "../services/wallet-service";
-import { ConnectionService } from "../services/connection-service";
 import { PublicKey } from "@solana/web3.js";
+import { useMcpContext } from "../utils/mcp-hooks";
+
 export function registerTestTokenTools(server: McpServer) {
   // Get Test Token
   server.tool(
@@ -21,24 +21,25 @@ export function registerTestTokenTools(server: McpServer) {
     },
     async ({ decimals, amountToMint }) => {
       try {
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
+        const context = await useMcpContext({
+          requireWallet: true,
+        });
+
+        if (!context.success) {
           return {
             content: [
-              { type: "text" as const, text: "Connection not established" },
+              {
+                type: "text",
+                text: context.error || "Failed to get context",
+              },
             ],
           };
         }
-        const walletRes = await WalletService.loadWallet();
-        if (!walletRes.success || !walletRes.data) {
-          return {
-            content: [{ type: "text" as const, text: "Wallet not loaded" }],
-          };
-        }
-        const connection = connectionRes.data;
-        const wallet = walletRes.data;
+
+        const { connection, keypair } = context;
         const decimalsOfToken = decimals ? decimals : 6;
-        const keypair = WalletService.getKeypair(wallet);
+        const amountToMintToken = amountToMint ? amountToMint : 10;
+
         const testToken = await createMint(
           connection,
           keypair,
@@ -46,13 +47,14 @@ export function registerTestTokenTools(server: McpServer) {
           null,
           decimalsOfToken
         );
-        const amountToMintToken = amountToMint ? amountToMint : 10;
+
         const receipientTokenAccount = await createAssociatedTokenAccount(
           connection,
           keypair,
           testToken,
           keypair.publicKey
         );
+
         const tx = await mintTo(
           connection,
           keypair,
@@ -61,20 +63,21 @@ export function registerTestTokenTools(server: McpServer) {
           keypair.publicKey,
           amountToMintToken * 10 ** decimalsOfToken
         );
+
         return {
           content: [
             {
-              type: "text" as const,
+              type: "text",
               text: JSON.stringify(
                 {
-                  mint: testToken,
-                  receipientTokenAccount,
+                  mint: testToken.toBase58(),
+                  receipientTokenAccount: receipientTokenAccount.toBase58(),
                   transaction: tx,
                   amountMinted: amountToMintToken,
                   decimals: decimalsOfToken,
                 },
                 null,
-                0
+                2
               ),
             },
           ],
@@ -89,7 +92,7 @@ export function registerTestTokenTools(server: McpServer) {
     }
   );
 
-  // mint more test token
+  // Mint more test token
   server.tool(
     "mintMoreTestToken",
     "Mint more test token",
@@ -100,31 +103,55 @@ export function registerTestTokenTools(server: McpServer) {
     },
     async ({ mint, receipint, amountToMint }) => {
       try {
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
+        const context = await useMcpContext({
+          requireWallet: true,
+        });
+
+        if (!context.success) {
           return {
-            content: [{ type: "text", text: "Connection not established" }],
+            content: [
+              {
+                type: "text",
+                text: context.error || "Failed to get context",
+              },
+            ],
           };
         }
-        const walletRes = await WalletService.loadWallet();
-        if (!walletRes.success || !walletRes.data) {
+
+        const { connection, keypair } = context;
+
+        // Validate mint address
+        let mintPubkey: PublicKey;
+        try {
+          mintPubkey = new PublicKey(mint);
+        } catch (error) {
           return {
-            content: [{ type: "text", text: "Wallet not loaded" }],
+            content: [
+              {
+                type: "text",
+                text: "Invalid mint address",
+              },
+            ],
           };
         }
-        const mintInfo = await getMint(connectionRes.data, new PublicKey(mint));
+
+        const mintInfo = await getMint(connection, mintPubkey);
         if (!mintInfo) {
           return {
-            content: [{ type: "text", text: "Mint not found" }],
+            content: [
+              {
+                type: "text",
+                text: "Mint not found",
+              },
+            ],
           };
         }
-        const connection = connectionRes.data;
-        const wallet = walletRes.data;
-        const keypair = WalletService.getKeypair(wallet);
-        const mintPubkey = new PublicKey(mint);
+
+        // Get recipient address
         const receipintPubkey = receipint
           ? new PublicKey(receipint)
           : keypair.publicKey;
+
         const receipientTokenAccount = await getOrCreateAssociatedTokenAccount(
           connection,
           keypair,
@@ -141,6 +168,7 @@ export function registerTestTokenTools(server: McpServer) {
           keypair.publicKey,
           amountToMint * 10 ** mintInfo.decimals
         );
+
         return {
           content: [
             {
@@ -148,7 +176,7 @@ export function registerTestTokenTools(server: McpServer) {
               text: JSON.stringify(
                 {
                   mint: mint,
-                  receipient: receipintPubkey.toBase58(),
+                  recipient: receipintPubkey.toBase58(),
                   receipientTokenAccount:
                     receipientTokenAccount.address.toBase58(),
                   amountInReceipientTokenAccount:
@@ -157,7 +185,7 @@ export function registerTestTokenTools(server: McpServer) {
                   amountMinted: amountToMint,
                 },
                 null,
-                0
+                2
               ),
             },
           ],

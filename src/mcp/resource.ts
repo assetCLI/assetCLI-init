@@ -21,11 +21,13 @@ export function registerResource(server: McpServer) {
   - Fund and manage DAO treasuries
   - Transfer assets from DAO treasuries
   - Query account information and transactions
+  - Create and manage standalone multisigs
   
   ## Getting Started
   1. Set your cluster with \`setCluster\` (devnet, testnet, or mainnet)
   2. Import or create a wallet with \`importWallet\`
   3. Create a DAO with \`createDao\` or use an existing one with \`useDao\`
+  4. Alternatively, work with a standalone multisig using \`setMultisigAddress\`
   
   ## Usage Examples
   - Create a new DAO: \`createDao\`
@@ -33,6 +35,7 @@ export function registerResource(server: McpServer) {
   - Create a transfer proposal: \`transferProposal\`
   - Vote on a proposal: \`voteProposal\`
   - Execute a proposal: \`executeProposal\`
+  - Work with standalone multisig: \`setMultisigAddress\` and \`multisigInfo\`
   
   ## Need Help?
   Type \`available-commands\` for a list of all available commands, or ask specific questions about any functionality.`;
@@ -42,6 +45,49 @@ export function registerResource(server: McpServer) {
           {
             uri: uri.href,
             text: readmeContent,
+          },
+        ],
+      };
+    }
+  );
+
+  // Add a new standalone multisig documentation resource
+  server.resource(
+    "multisigDocumentation",
+    new ResourceTemplate("assetCLI://docs/multisig-guide", { list: undefined }),
+    async (uri) => {
+      const content = `# Standalone Multisig Management Guide
+  
+  ## Standalone Multisig
+  A standalone Squads multisig is a multisignature wallet that's separate from any DAO, allowing multiple parties to control assets together.
+  
+  ## Working with Standalone Multisigs
+  
+  ### Setting a Multisig
+  Use \`setMultisigAddress\` to configure an existing multisig address:
+  - \`address\`: The public key of the multisig account
+  
+  ### Getting Multisig Information
+  Use \`multisigInfo\` to view details about the configured multisig, including:
+  - Vault address and balance
+  - Members and threshold
+  - Current transaction index
+  
+  ### Creating Transactions
+  Use \`createMultisigTransaction\` to create SOL transfer transactions:
+  - \`recipient\`: Recipient address
+  - \`amount\`: Amount of SOL to transfer
+  - \`title\`: Optional transaction title
+  
+  ### Approving and Executing Transactions
+  - \`approveMultisigTransaction\`: Approve a transaction by its index number
+  - \`executeMultisigTransaction\`: Execute an approved transaction that meets threshold`;
+
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: content,
           },
         ],
       };

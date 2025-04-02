@@ -41,6 +41,20 @@
 
 ## 2. Tokenomics Model
 
+Our model covers both token and SOL allocation.
+
+- **Total Supply**: 100,000,000 tokens
+- **Allocation**:
+  - Public Fair Launch: 50% (50M tokens) - Immediately liquid & tradeable via bonding curve
+  - Locked Reserves: 20% (20M tokens) - Locked for future ecosystem development
+  - DAO Treasury: 20% (20M tokens) - Controlled by governance
+  - Burned: 10% (10M tokens) - For deflationary effect
+
+### SOL Allocation
+
+- **DAO Treasury**: 80% of all raised SOL is allocated directly to the treasury
+- **Locked Liquidity**: 20% of raised SOL is used to mint LP tokens that are locked for a predetermined period
+
 ## Updated Bonding Curve Mathematics
 
 Our bonding curve implementation uses a constant product formula similar to AMMs but with important adjustments to manage treasury allocations properly:
@@ -71,15 +85,6 @@ Our bonding curve implementation uses a constant product formula similar to AMMs
 - When users sell tokens, the treasury allocation is proportionally reduced
 - This ensures the constant product formula remains valid
 - Maximum withdrawal is capped to available (non-treasury) SOL
-
-## Token Supply & Allocation
-
-- **Total Supply**: 100,000,000 tokens
-- **Allocation**:
-  - Public Fair Launch (Bonding Curve): 50% (50M tokens) - immediately liquid & tradeable
-  - Liquidity Provision: 20% (20M tokens) - locked after migration
-  - DAO Treasury: 20% (20M tokens) - controlled by governance
-  - Burned: 10% (10M tokens) - for deflationary effect
 
 ## Fair Launch Model
 
@@ -144,6 +149,7 @@ Our bonding curve implementation uses a constant product formula similar to AMMs
 assetCLI token setup-curve --type constant-product \
   --initial-virtual-sol 30000000000 \
   --initial-virtual-tokens 100000000000000 \
+  --real-token-reserves 50000000000000 \
   --treasury-allocation 20 \
   --always-liquid true
 

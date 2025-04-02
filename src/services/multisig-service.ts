@@ -5,12 +5,19 @@ import {
   TransactionInstruction,
   Transaction,
   TransactionMessage,
-  VersionedTransaction,
+  SystemProgram,
+  LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import * as multisig from "@sqds/multisig";
 import { KeypairUtil } from "../utils/keypair-util";
-import { ServiceResponse, MultisigData } from "../types/service-types";
 import { sendTx } from "../utils/send_tx";
+import { ServiceResponse, MultisigData } from "../types/service-types";
+import {
+  getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
+  getMint,
+} from "@solana/spl-token";
 
 export interface MultisigTransactionResult {
   transactionIndex: number;
@@ -186,6 +193,140 @@ export class MultisigService {
       success: true,
       data: vaultPda,
     };
+  }
+
+  /**
+   * Creates an instruction for transferring SOL from a multisig vault
+   */
+  static async getSquadsMultisigSolTransferInstruction(
+    connection: Connection,
+    multisigAddress: PublicKey,
+    amount: number | bigint,
+    recipientAddress: PublicKey
+  ): Promise<ServiceResponse<TransactionInstruction>> {
+    try {
+      // Get the Squads vault PDA for index 0
+      const vaultPda = this.getMultisigVaultPda(multisigAddress).data!;
+
+      // Calculate lamports
+      const lamports =
+        typeof amount === "number"
+          ? amount * LAMPORTS_PER_SOL
+          : amount * BigInt(LAMPORTS_PER_SOL);
+
+      // Create the inner transfer instruction that will be executed by the vault
+      const transferInstruction = SystemProgram.transfer({
+        fromPubkey: vaultPda,
+        toPubkey: recipientAddress,
+        lamports: typeof lamports === "bigint" ? Number(lamports) : lamports,
+      });
+
+      return {
+        success: true,
+        data: transferInstruction,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to create multisig SOL transfer instruction",
+          details: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Creates an instruction for transferring token from a multisig vault
+   */
+  static async getSquadsMultisigTokenTransferInstruction(
+    connection: Connection,
+    multisigAddress: PublicKey,
+    amount: number | bigint,
+    recipientAddress: PublicKey,
+    mintAddress: PublicKey
+  ): Promise<ServiceResponse<TransactionInstruction[]>> {
+    try {
+      // Get the Squads vault PDA for index 0
+      const vaultPdaResult = this.getMultisigVaultPda(multisigAddress);
+      if (!vaultPdaResult.success) {
+        return {
+          success: false,
+          error: vaultPdaResult.error ?? {
+            message: "Failed to get multisig vault PDA",
+          },
+        };
+      }
+      const vaultPda = vaultPdaResult.data!;
+
+      // Get token info for decimals
+      const tokenInfo = await getMint(connection, mintAddress);
+
+      // Calculate transfer amount with decimals
+      const adjustedAmount =
+        typeof amount === "number"
+          ? amount * Math.pow(10, tokenInfo.decimals)
+          : amount * BigInt(Math.pow(10, tokenInfo.decimals));
+
+      // Source token account is the vault's associated token account
+      const sourceTokenAccount = getAssociatedTokenAddressSync(
+        mintAddress,
+        vaultPda,
+        true // Allow PDA owners
+      );
+
+      // Destination is the recipient's associated token account
+      const recipientTokenAccount = getAssociatedTokenAddressSync(
+        mintAddress,
+        recipientAddress,
+        false
+      );
+
+      // Create instructions array
+      const instructions: TransactionInstruction[] = [];
+
+      // Check if recipient token account exists
+      const recipientAccountInfo = await connection.getAccountInfo(
+        recipientTokenAccount
+      );
+
+      // If recipient account doesn't exist, add instruction to create it
+      if (!recipientAccountInfo) {
+        instructions.push(
+          createAssociatedTokenAccountInstruction(
+            vaultPda, // payer (the vault will pay during execution)
+            recipientTokenAccount,
+            recipientAddress,
+            mintAddress
+          )
+        );
+      }
+
+      // Add transfer instruction
+      instructions.push(
+        createTransferInstruction(
+          sourceTokenAccount,
+          recipientTokenAccount,
+          vaultPda, // authority (the vault is the owner of the token account)
+          typeof adjustedAmount === "bigint"
+            ? Number(adjustedAmount)
+            : Math.floor(adjustedAmount)
+        )
+      );
+
+      return {
+        success: true,
+        data: instructions,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to create multisig token transfer instruction",
+          details: error,
+        },
+      };
+    }
   }
 
   /**
@@ -532,6 +673,85 @@ export class MultisigService {
   }
 
   /**
+   * Rejects a multisig proposal
+   */
+  static async rejectProposal(
+    connection: Connection,
+    keypair: Keypair,
+    multisigPda: PublicKey,
+    transactionIndex: number
+  ): Promise<ServiceResponse<string>> {
+    try {
+      // First check if the proposal exists
+      const [proposalPda] = multisig.getProposalPda({
+        multisigPda,
+        transactionIndex: BigInt(transactionIndex),
+      });
+      try {
+        // Try to fetch the proposal to see if it exists
+        const proposal = await multisig.accounts.Proposal.fromAccountAddress(
+          connection,
+          proposalPda
+        );
+        // Check if the user already rejected this proposal
+        const alreadyRejected = proposal.rejected.some((rejector) =>
+          rejector.equals(keypair.publicKey)
+        );
+        if (alreadyRejected) {
+          return {
+            success: true,
+            data: "Already rejected",
+          };
+        }
+        // Get multisig account to check membership
+        const multisigAccount =
+          await multisig.accounts.Multisig.fromAccountAddress(
+            connection,
+            multisigPda
+          );
+
+        // Check if the keypair is a member
+        const isMember = multisigAccount.members.some((m) =>
+          m.key.equals(keypair.publicKey)
+        );
+        if (!isMember) {
+          return {
+            success: false,
+            error: {
+              message: "User is not a member of the multisig",
+            },
+          };
+        }
+      } catch (e) {
+        return {
+          success: false,
+          error: {
+            message: "Proposal doesn't exist",
+          },
+        };
+      }
+      // Create rejection instruction
+      // Create approval instruction
+      const ix = multisig.instructions.proposalReject({
+        multisigPda,
+        transactionIndex: BigInt(transactionIndex),
+        member: keypair.publicKey,
+      });
+
+      // Create and send transaction
+      return await sendTx(connection, keypair, [ix]);
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to reject proposal",
+          details: error,
+        },
+      };
+    }
+  }
+
+  /**
    * Executes an approved multisig transaction
    */
   static async executeMultisigTransaction(
@@ -588,62 +808,6 @@ export class MultisigService {
         success: false,
         error: {
           message: "Failed to get multisig for realm",
-          details: error,
-        },
-      };
-    }
-  }
-
-  /**
-   * Calculates if adding an approval would meet the threshold
-   */
-  static async wouldMeetThreshold(
-    connection: Connection,
-    multisigPda: PublicKey,
-    transactionIndex: number
-  ): Promise<ServiceResponse<boolean>> {
-    try {
-      // Get the multisig account to check threshold
-      const multisigAccount =
-        await multisig.accounts.Multisig.fromAccountAddress(
-          connection,
-          multisigPda
-        );
-
-      // Get the proposal account
-      const [proposalPda] = multisig.getProposalPda({
-        multisigPda,
-        transactionIndex: BigInt(transactionIndex),
-      });
-
-      try {
-        const proposal = await multisig.accounts.Proposal.fromAccountAddress(
-          connection,
-          proposalPda
-        );
-
-        // Existing approvals + 1 (our new approval)
-        const approvalCount = proposal.approved
-          ? proposal.approved.length + 1
-          : 1;
-        const threshold = multisigAccount.threshold;
-
-        return {
-          success: true,
-          data: approvalCount >= threshold,
-        };
-      } catch {
-        // Proposal might not exist yet
-        return {
-          success: true,
-          data: multisigAccount.threshold <= 1,
-        };
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: {
-          message: "Failed to check threshold",
           details: error,
         },
       };
@@ -722,115 +886,6 @@ export class MultisigService {
     }
   }
 
-  // TODO: Should be of use when we want the multisig to be approved and executed simultaneously
-  // /**
-  //  * Approves and executes a multisig transaction in one step if threshold is met
-  //  */
-  // static async approveAndExecuteIfReady(
-  //   connection: Connection,
-  //   keypair: Keypair,
-  //   multisigPda: PublicKey,
-  //   transactionIndex: number
-  // ): Promise<
-  //   ServiceResponse<{
-  //     approved: boolean;
-  //     executed: boolean;
-  //     signature?: string;
-  //   }>
-  // > {
-  //   try {
-  //     // First check if our approval would meet the threshold
-  //     const thresholdResult = await this.wouldMeetThreshold(
-  //       connection,
-  //       multisigPda,
-  //       transactionIndex
-  //     );
-
-  //     if (!thresholdResult.success) {
-  //       return {
-  //         success: false,
-  //         data: {
-  //           approved: false,
-  //           executed: false,
-  //         },
-  //         error: thresholdResult.error ?? { message: "Threshold error" },
-  //       };
-  //     }
-
-  //     const willMeetThreshold = thresholdResult.data!;
-
-  //     // Approve the transaction
-  //     const approveResult = await this.approveProposal(
-  //       connection,
-  //       keypair,
-  //       multisigPda,
-  //       transactionIndex
-  //     );
-
-  //     if (!approveResult.success) {
-  //       return {
-  //         success: false,
-  //         data: {
-  //           approved: false,
-  //           executed: false,
-  //         },
-  //         error: approveResult.error ?? {
-  //           message: "Couldn't approve proposal",
-  //         },
-  //       };
-  //     }
-
-  //     const approveSig = approveResult.data!;
-
-  //     // If threshold is met, execute immediately
-  //     if (willMeetThreshold) {
-  //       const executeResult = await this.executeMultisigTransaction(
-  //         connection,
-  //         keypair,
-  //         multisigPda,
-  //         transactionIndex
-  //       );
-
-  //       if (!executeResult.success) {
-  //         return {
-  //           success: true,
-  //           data: {
-  //             approved: true,
-  //             executed: false,
-  //             signature: approveSig,
-  //           },
-  //         };
-  //       }
-
-  //       return {
-  //         success: true,
-  //         data: {
-  //           approved: true,
-  //           executed: true,
-  //           signature: executeResult.data ?? "",
-  //         },
-  //       };
-  //     }
-
-  //     return {
-  //       success: true,
-  //       data: {
-  //         approved: true,
-  //         executed: false,
-  //         signature: approveSig,
-  //       },
-  //     };
-  //   } catch (error) {
-  //     return {
-  //       success: false,
-  //       error: {
-  //         message: "Failed to approve and execute transaction",
-  //         details: error,
-  //       },
-  //     };
-  //   }
-  // }
-
   /**
    * Gets information about a multisig account
    */
@@ -860,6 +915,210 @@ export class MultisigService {
         success: false,
         error: {
           message: "Failed to get multisig info",
+          details: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Funds a multisig vault with SOL
+   */
+  static async fundSolanaToMultisig(
+    connection: Connection,
+    keypair: Keypair,
+    multisigAddress: PublicKey,
+    amount: number
+  ): Promise<ServiceResponse<string>> {
+    try {
+      // Get the vault PDA of the multisig
+      const vaultPdaResult = this.getMultisigVaultPda(multisigAddress);
+      if (!vaultPdaResult.success) {
+        return {
+          success: false,
+          error: vaultPdaResult.error ?? {
+            message: "Failed to get multisig vault PDA",
+          },
+        };
+      }
+
+      const vaultPda = vaultPdaResult.data!;
+
+      // Calculate lamports
+      const lamports = amount * LAMPORTS_PER_SOL;
+
+      // Create transfer instruction
+      const transferInstruction = SystemProgram.transfer({
+        fromPubkey: keypair.publicKey,
+        toPubkey: vaultPda,
+        lamports,
+      });
+
+      // Send the transaction
+      return await sendTx(connection, keypair, [transferInstruction]);
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to fund multisig vault",
+          details: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Fund a token account for a recipient
+   * @param connection Solana connection
+   * @param keypair Wallet keypair
+   * @param tokenMint Token mint address
+   * @param recipient Recipient address
+   * @param amount Amount of tokens to transfer (decimal)
+   * @returns Transaction signature
+   */
+  static async fundTokenAccount(
+    connection: Connection,
+    keypair: Keypair,
+    tokenMint: PublicKey,
+    recipient: PublicKey,
+    amount: number
+  ): Promise<ServiceResponse<string>> {
+    try {
+      // Get token info for decimals
+      const tokenInfo = await getMint(connection, tokenMint);
+
+      // Find source token account
+      const sourceAccounts = await connection.getParsedTokenAccountsByOwner(
+        keypair.publicKey,
+        { mint: tokenMint }
+      );
+
+      if (!sourceAccounts.value || sourceAccounts.value.length === 0) {
+        return {
+          success: false,
+          error: {
+            message: `No token accounts found for mint ${tokenMint.toBase58()}`,
+          },
+        };
+      }
+
+      // Use the first account that has enough tokens
+      const sourceAccount = sourceAccounts.value[0].pubkey;
+
+      // Calculate the destination token account (ATA)
+      const destinationAccount = getAssociatedTokenAddressSync(
+        tokenMint,
+        recipient,
+        true // Allow PDA owners
+      );
+
+      // Check if destination account exists
+      const instructions: TransactionInstruction[] = [];
+      const destinationAccountInfo = await connection.getAccountInfo(
+        destinationAccount
+      );
+
+      // Create destination account if needed
+      if (!destinationAccountInfo) {
+        instructions.push(
+          createAssociatedTokenAccountInstruction(
+            keypair.publicKey,
+            destinationAccount,
+            recipient,
+            tokenMint
+          )
+        );
+      }
+
+      // Calculate token amount with decimals
+      const adjustedAmount = amount * Math.pow(10, tokenInfo.decimals);
+
+      // Add transfer instruction
+      instructions.push(
+        createTransferInstruction(
+          sourceAccount,
+          destinationAccount,
+          keypair.publicKey,
+          Math.floor(adjustedAmount)
+        )
+      );
+
+      // Execute instructions
+      return await sendTx(connection, keypair, instructions);
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to fund token account",
+          details: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Fetches all proposals for a multisig
+   */
+  static async getAllProposals(
+    connection: Connection,
+    multisigPda: PublicKey
+  ): Promise<
+    ServiceResponse<
+      {
+        proposal: multisig.accounts.Proposal | null;
+        transactionIndex: bigint;
+      }[]
+    >
+  > {
+    try {
+      // Get multisig info to determine the number of transactions
+      const multisigInfo = await multisig.accounts.Multisig.fromAccountAddress(
+        connection,
+        multisigPda
+      );
+
+      const totalTransactions = Number(multisigInfo.transactionIndex);
+
+      // Create an array to hold all transaction indexes
+      const transactionIndexes = Array.from(
+        { length: totalTransactions },
+        (_, i) => BigInt(i + 1) // Indexes start at 1
+      );
+
+      // Fetch all proposals in parallel
+      const proposalResults = await Promise.all(
+        transactionIndexes.map(async (index) => {
+          const proposalPda = multisig.getProposalPda({
+            multisigPda,
+            transactionIndex: index,
+          })[0];
+
+          let proposal = null;
+          try {
+            proposal = await multisig.accounts.Proposal.fromAccountAddress(
+              connection,
+              proposalPda
+            );
+          } catch (error) {
+            // Proposal might not exist, which is fine
+          }
+
+          return {
+            proposal,
+            transactionIndex: index,
+          };
+        })
+      );
+
+      return {
+        success: true,
+        data: proposalResults,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to fetch all proposals",
           details: error,
         },
       };

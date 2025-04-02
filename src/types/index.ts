@@ -7,15 +7,20 @@ export interface WalletConfig {
 
 export interface DaoConfig {
   activeRealm?: string;
-  governanceAddress?: string;
-  treasuryAddress?: string;
+  activeMultisig?: string; // For backwards compatibility
   cluster: Cluster;
   endpoint: string;
+}
+
+export interface SquadsMultisigConfig {
+  activeAddress?: string;
+  // Could add more multisig-specific config options in the future
 }
 
 export interface Config {
   wallet?: WalletConfig;
   dao?: DaoConfig;
+  squadsMultisig?: SquadsMultisigConfig; // Separate top-level config
 }
 
 export interface CommandOptions {
@@ -32,4 +37,8 @@ export interface PriorityFeeResponse {
     transaction: string;
     options: { priorityLevel: string };
   }>;
+}
+
+export interface WalletData {
+  privateKey: string;
 }

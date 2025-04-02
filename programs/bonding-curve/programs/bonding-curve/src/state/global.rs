@@ -33,10 +33,11 @@ impl Default for Global {
             global_authority: Pubkey::default(),
             migrate_fee_amount: 500,
             fee_receiver: Pubkey::default(),
-            initial_virtual_token_reserves: 100_000_000_000_000,
-            initial_virtual_sol_reserves: 30000000000,
-            initial_real_token_reserves: 50_000_000_000_000,
-            token_total_supply: 100_000_000_000_000,
+            initial_virtual_token_reserves: 100_000_000_000_000, // 100M with 6 decimals
+            initial_virtual_sol_reserves: 30000000000, // Initial SOL pricing parameter
+            // Only 50% of supply available for trading
+            initial_real_token_reserves: 50_000_000_000_000, // 50M with 6 decimals
+            token_total_supply: 100_000_000_000_000, // Total 100M tokens
             mint_decimals: 6,
             whitelist_enabled: false,
             bump: 0,

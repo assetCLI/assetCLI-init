@@ -106,7 +106,6 @@ export class ConfigService {
       config.dao = {
         ...config.dao,
         activeRealm: realmAddress,
-        activeMultisig: undefined, // Clear active multisig
       } as DaoConfig;
 
       const saveResponse = await this.saveConfig(config);
@@ -142,5 +141,94 @@ export class ConfigService {
       cluster,
       endpoint: effectiveEndpoint,
     });
+  }
+
+  static async resetConfig(): Promise<ServiceResponse<void>> {
+    try {
+      await fs.remove(CONFIG_PATH);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to reset configuration",
+          details: error,
+        },
+      };
+    }
+  }
+
+  static async setActiveSquadsMultisig(
+    multisigAddress: string
+  ): Promise<ServiceResponse<Config>> {
+    try {
+      const configResponse = await this.getConfig();
+      if (!configResponse.success || !configResponse.data) {
+        return configResponse;
+      }
+
+      const config = configResponse.data;
+      // Initialize squadsMultisig if it doesn't exist
+      if (!config.squadsMultisig) {
+        config.squadsMultisig = {};
+      }
+
+      config.squadsMultisig.activeAddress = multisigAddress;
+
+      const saveResponse = await this.saveConfig(config);
+      if (!saveResponse.success) {
+        return {
+          success: false,
+          error: {
+            message: "Failed to set active Squads multisig",
+            details: saveResponse.error,
+          },
+          data: config,
+        };
+      }
+
+      return { success: true, data: config };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to set active Squads multisig",
+          details: error,
+        },
+      };
+    }
+  }
+
+  static async getActiveSquadsMultisig(): Promise<
+    ServiceResponse<string | undefined>
+  > {
+    try {
+      const configResponse = await this.getConfig();
+      if (!configResponse.success || !configResponse.data) {
+        return configResponse.data?.squadsMultisig?.activeAddress
+          ? {
+              success: true,
+              data: configResponse.data.squadsMultisig.activeAddress,
+            }
+          : {
+              success: false,
+              error: { message: "No active Squads multisig found" },
+            };
+      }
+
+      const config = configResponse.data;
+      return {
+        success: true,
+        data: config.squadsMultisig?.activeAddress,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to get active Squads multisig",
+          details: error,
+        },
+      };
+    }
   }
 }

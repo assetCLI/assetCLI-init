@@ -30,7 +30,6 @@ pub struct BondingCurve {
     pub bump: u8,
     pub sol_raise_target: u64,
     pub realm_pubkey: Pubkey,
-    pub treasury_allocation: u64, // Track treasury's portion without physically separating it
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -134,25 +133,27 @@ impl BondingCurve {
         let complete = false;
 
         let sol_raise_target = params.sol_raise_target;
-
         let realm_pubkey = params.realm_pubkey;
 
+        // Important: Use full token supply for virtual reserves (100M),
+        // but only 50% is actually tradable
         self.clone_from(
             &(BondingCurve {
                 mint,
                 creator,
-                virtual_token_reserves: global_config.initial_virtual_token_reserves,
+                // Use FULL token supply for virtual reserves to accurately represent price
+                virtual_token_reserves: global_config.token_total_supply, // 100M tokens
                 virtual_sol_reserves: global_config.initial_virtual_sol_reserves,
-                initial_virtual_token_reserves: global_config.initial_virtual_token_reserves,
+                initial_virtual_token_reserves: global_config.token_total_supply,
                 real_sol_reserves: 0,
-                real_token_reserves: global_config.initial_real_token_reserves,
+                // Only 50% of tokens available for trading
+                real_token_reserves: global_config.initial_real_token_reserves, // 50M tokens
                 token_total_supply: global_config.token_total_supply,
                 start_time,
                 complete,
                 bump,
                 sol_raise_target,
                 realm_pubkey,
-                treasury_allocation: 0, // Initialize treasury allocation to 0
             })
         );
         self
@@ -236,16 +237,14 @@ impl BondingCurve {
             0.0
         };
 
-        // Calculate and track treasury allocation (20%)
+        // Calculate treasury portion (20% of SOL)
         let treasury_portion = (sol_amount as u128)
             .checked_mul(2000)
             .and_then(|amt| amt.checked_div(10000))
             .and_then(|amt| u64::try_from(amt).ok())?;
 
-        self.treasury_allocation = self.treasury_allocation.checked_add(treasury_portion)?;
-
-        // IMPORTANT: Reduce virtual_sol_reserves by the treasury portion to maintain the correct product
-        // This ensures virtual SOL reserves only represent SOL available for trading
+        // We no longer need to track treasury allocation
+        // But we still need to reduce virtual_sol_reserves to maintain the curve
         let new_virtual_sol_reserves = new_virtual_sol_reserves.checked_sub(
             treasury_portion as u128
         )?;
@@ -305,24 +304,6 @@ impl BondingCurve {
         } else {
             0.0
         };
-
-        // Adjust treasury allocation downward (20% of sol_amount)
-        let treasury_reduction = (sol_amount as u128)
-            .checked_mul(2000)
-            .and_then(|amt| amt.checked_div(10000))
-            .and_then(|amt| u64::try_from(amt).ok())?;
-
-        msg!("apply_sell: treasury_allocation before: {}", self.treasury_allocation);
-        msg!("apply_sell: treasury_reduction: {}", treasury_reduction);
-
-        // Ensure we don't underflow the treasury allocation
-        self.treasury_allocation = if self.treasury_allocation >= treasury_reduction {
-            self.treasury_allocation - treasury_reduction
-        } else {
-            msg!("apply_sell: treasury_allocation underflow, setting to 0");
-            0 // In case something went wrong with the math
-        };
-        msg!("apply_sell: treasury_allocation after: {}", self.treasury_allocation);
 
         self.virtual_token_reserves = new_virtual_token_reserves.try_into().ok()?;
         self.real_token_reserves = new_real_token_reserves.try_into().ok()?;
@@ -464,18 +445,6 @@ impl BondingCurve {
             msg!("tkn_amount: {}", tkn_amount);
             return Err(ContractError::BondingCurveInvariant.into());
         }
-
-        // Ensure the bonding curve is complete only if real token reserves are zero
-        // get back to this later
-        // if bonding_curve.complete && bonding_curve.real_token_reserves != 0 {
-        //     msg!("Invariant failed: bonding curve marked as complete but real_token_reserves != 0");
-        //     return Err(ContractError::BondingCurveInvariant.into());
-        // }
-
-        // if !bonding_curve.complete && !tkn_account.is_frozen() {
-        //     msg!("Active BondingCurve TokenAccount must always be frozen at the end");
-        //     return Err(ContractError::BondingCurveInvariant.into());
-        // }
         Ok(())
     }
 }

@@ -2,10 +2,4 @@ node_modules
 dist
 test-ledger
 
-//testing purposes
-
-multisig
-ref
-ref2
-log
-sqds
+src/services/squads-multisig

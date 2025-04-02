@@ -33,7 +33,6 @@ export function registerAgentTools(server: McpServer) {
         const connectionRes = await ConnectionService.getConnection();
         if (!connectionRes.success || !connectionRes.data) {
           return {
-            isError: true,
             content: [{ type: "text", text: "Connection failed" }],
           };
         }
@@ -41,7 +40,6 @@ export function registerAgentTools(server: McpServer) {
         const walletRes = await WalletService.loadWallet();
         if (!walletRes.success || !walletRes.data) {
           return {
-            isError: true,
             content: [{ type: "text", text: "Wallet not loaded" }],
           };
         }
@@ -68,15 +66,8 @@ export function registerAgentTools(server: McpServer) {
           ],
         };
       } catch (e) {
-        console.error("Error executing agent tool:", e);
         return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: e instanceof Error ? e.message : `Error: ${e}`,
-            },
-          ],
+          content: [{ type: "text", text: `Error: ${e}` }],
         };
       }
     });
@@ -98,11 +89,7 @@ export function registerAgentTools(server: McpServer) {
             : undefined;
           const examples = action.examples.flat();
           const selectedExamples =
-            typeof showIndex === "number" &&
-            showIndex >= 0 &&
-            showIndex < examples.length
-              ? [examples[showIndex]]
-              : examples;
+            typeof showIndex === "number" ? [examples[showIndex]] : examples;
 
           const exampleText = selectedExamples
             .map(

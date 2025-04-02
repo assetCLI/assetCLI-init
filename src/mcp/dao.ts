@@ -1,10 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ConnectionService } from "../services/connection-service";
 import { ConfigService } from "../services/config-service";
-import { WalletService } from "../services/wallet-service";
 import { PublicKey } from "@solana/web3.js";
 import { GovernanceService } from "../services/governance-service";
+import { useMcpContext } from "../utils/mcp-hooks";
 
 export function registerDaoTools(server: McpServer) {
   server.tool(
@@ -17,122 +16,127 @@ export function registerDaoTools(server: McpServer) {
       threshold: z.number(),
     },
     async ({ integrated, name, members, threshold }) => {
-      const connectionRes = await ConnectionService.getConnection();
-      if (!connectionRes.success || !connectionRes.data) {
-        return {
-          content: [{ type: "text", text: "Connection not established" }],
-        };
-      }
-      const walletRes = await WalletService.loadWallet();
-      if (!walletRes.success || !walletRes.data) {
-        return {
-          content: [{ type: "text", text: "Wallet not loaded" }],
-        };
-      }
-      const connection = connectionRes.data;
-      const wallet = walletRes.data;
-      const keypair = WalletService.getKeypair(wallet);
-      const membersPubkeys: PublicKey[] = [keypair.publicKey];
-      for (const member of members) {
-        try {
-          if (member !== keypair.publicKey.toBase58())
-            membersPubkeys.push(new PublicKey(member));
-        } catch (e) {
-          // Do nothing
+      try {
+        // Get context with wallet and connection
+        const context = await useMcpContext({ requireWallet: true });
+        if (!context.success) {
+          return {
+            content: [
+              { type: "text", text: context.error || "Failed to get context" },
+            ],
+          };
         }
-      }
-      if (membersPubkeys.length < threshold) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Threshold should be less than or equal to number of members",
+
+        const { connection, keypair } = context;
+        const membersPubkeys: PublicKey[] = [keypair.publicKey];
+
+        for (const member of members) {
+          try {
+            if (member !== keypair.publicKey.toBase58())
+              membersPubkeys.push(new PublicKey(member));
+          } catch (e) {
+            // Do nothing
+          }
+        }
+
+        if (membersPubkeys.length < threshold) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Threshold should be less than or equal to number of members",
+              },
+            ],
+          };
+        }
+
+        // Use different initialization functions based on integration mode
+        let daoResult;
+        if (integrated) {
+          // Use integrated DAO creation
+          daoResult = await GovernanceService.initializeIntegratedDAO(
+            connection,
+            keypair,
+            name,
+            membersPubkeys,
+            threshold
+          );
+        } else {
+          daoResult = await GovernanceService.initializeDAO(
+            connection,
+            keypair,
+            name,
+            membersPubkeys,
+            threshold
+          );
+        }
+
+        if (!daoResult.success || !daoResult.data) {
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(daoResult.error, null) },
+            ],
+          };
+        }
+
+        // Store the realm address in config
+        const configResult = await ConfigService.setActiveRealm(
+          daoResult.data.realmAddress.toBase58()
+        );
+
+        if (!configResult.success) {
+          return {
+            content: [
+              { type: "text", text: JSON.stringify(configResult.error, null) },
+            ],
+          };
+        }
+
+        // Format response based on DAO type
+        let result;
+        if (integrated) {
+          result = {
+            success: true,
+            dao: {
+              realmAddress: daoResult.data.realmAddress.toBase58(),
+              governanceAddress: daoResult.data.governanceAddress.toBase58(),
+              treasuryAddress: daoResult.data.treasuryAddress.toBase58(),
+              communityMint: daoResult.data.communityMint.toBase58(),
+              councilMint: daoResult.data.councilMint.toBase58(),
+              //@ts-ignore
+              transaction: daoResult.data.daoTransaction,
             },
-          ],
-        };
-      }
+            squadMultisig: {
+              //@ts-ignore
+              multisigAddress: daoResult.data.multisigAddress.toBase58(),
+              //@ts-ignore
+              transaction: daoResult.data.squadsTransaction,
+            },
+          };
+        } else {
+          result = {
+            success: true,
+            dao: {
+              realmAddress: daoResult.data.realmAddress.toBase58(),
+              governanceAddress: daoResult.data.governanceAddress.toBase58(),
+              treasuryAddress: daoResult.data.treasuryAddress.toBase58(),
+              communityMint: daoResult.data.communityMint.toBase58(),
+              councilMint: daoResult.data.councilMint.toBase58(),
+              //@ts-ignore
+              transaction: daoResult.data.transactionSignature,
+            },
+            squadMultisig: null,
+          };
+        }
 
-      // Use different initialization functions based on integration mode
-      let daoResult;
-      if (integrated) {
-        // Use integrated DAO creation
-        daoResult = await GovernanceService.initializeIntegratedDAO(
-          connection,
-          keypair,
-          name,
-          membersPubkeys,
-          threshold
-        );
-      } else {
-        daoResult = await GovernanceService.initializeDAO(
-          connection,
-          keypair,
-          name,
-          membersPubkeys,
-          threshold
-        );
-      }
-
-      if (!daoResult.success || !daoResult.data) {
         return {
-          content: [
-            { type: "text", text: JSON.stringify(daoResult.error, null) },
-          ],
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
-      }
-
-      // Store the realm address in config
-      const configResult = await ConfigService.setActiveRealm(
-        daoResult.data.realmAddress.toBase58()
-      );
-      if (!configResult.success) {
+      } catch (error) {
         return {
-          content: [
-            { type: "text", text: JSON.stringify(configResult.error, null) },
-          ],
+          content: [{ type: "text", text: `Error creating DAO: ${error}` }],
         };
       }
-
-      // Format response based on DAO type
-      let result;
-      if (integrated) {
-        result = {
-          success: true,
-          dao: {
-            realmAddress: daoResult.data.realmAddress.toBase58(),
-            governanceAddress: daoResult.data.governanceAddress.toBase58(),
-            treasuryAddress: daoResult.data.treasuryAddress.toBase58(),
-            communityMint: daoResult.data.communityMint.toBase58(),
-            councilMint: daoResult.data.councilMint.toBase58(),
-            //@ts-ignore
-            transaction: daoResult.data.daoTransaction,
-          },
-          squadMultisig: {
-            //@ts-ignore
-            multisigAddress: daoResult.data.multisigAddress.toBase58(),
-            //@ts-ignore
-            transaction: daoResult.data.squadsTransaction,
-          },
-        };
-      } else {
-        result = {
-          success: true,
-          dao: {
-            realmAddress: daoResult.data.realmAddress.toBase58(),
-            governanceAddress: daoResult.data.governanceAddress.toBase58(),
-            treasuryAddress: daoResult.data.treasuryAddress.toBase58(),
-            communityMint: daoResult.data.communityMint.toBase58(),
-            councilMint: daoResult.data.councilMint.toBase58(),
-            //@ts-ignore
-            transaction: daoResult.data.transactionSignature,
-          },
-          squadMultisig: null,
-        };
-      }
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
     }
   );
 
@@ -141,166 +145,145 @@ export function registerDaoTools(server: McpServer) {
     "Displays the current DAO configuration and info",
     {},
     async () => {
-      const connectionRes = await ConnectionService.getConnection();
-      if (!connectionRes.success || !connectionRes.data) {
+      try {
+        const context = await useMcpContext({ requireDao: true });
+        if (!context.success) {
+          return {
+            content: [
+              { type: "text", text: context.error || "Failed to get context" },
+            ],
+          };
+        }
+
+        const { connection, realmAddress } = context;
+        const realmInfoRes = await GovernanceService.getRealmInfo(
+          connection,
+          realmAddress!
+        );
+
+        if (!realmInfoRes.success || !realmInfoRes.data) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Failed to get realm info",
+              },
+            ],
+          };
+        }
+
+        const realmInfo = realmInfoRes.data;
         return {
-          content: [{ type: "text", text: "Connection not established" }],
+          content: [{ type: "text", text: JSON.stringify(realmInfo, null, 2) }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Failed to get DAO info: ${error}` }],
         };
       }
-      const connection = connectionRes.data;
-      const configRes = await ConfigService.getConfig();
-      if (
-        !configRes.success ||
-        !configRes.data ||
-        !configRes.data.dao?.activeRealm
-      ) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Config not loaded or Realm not configured.\n First configure to use a realm",
-            },
-          ],
-        };
-      }
-      const realmAddress = new PublicKey(configRes.data.dao?.activeRealm);
-      const realmInfoRes = await GovernanceService.getRealmInfo(
-        connection,
-        realmAddress
-      );
-      if (!realmInfoRes.success || !realmInfoRes.data) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Failed to get realm info",
-            },
-          ],
-        };
-      }
-      const realmInfo = realmInfoRes.data;
-      return {
-        content: [{ type: "text", text: JSON.stringify(realmInfo, null, 2) }],
-      };
     }
   );
 
   server.tool(
-    "fundSolana",
+    "fundSolanaToDaoTreasury",
     "Fund native Solana to the current multisig DAO treasury. This is used to fund the DAO",
     {
       amount: z.number(),
     },
     async ({ amount }) => {
-      // Load wallet and connection
-      const walletRes = await WalletService.loadWallet();
-      if (!walletRes.success || !walletRes.data) {
+      try {
+        const context = await useMcpContext({
+          requireWallet: true,
+          requireDao: true,
+        });
+
+        if (!context.success) {
+          return {
+            content: [
+              { type: "text", text: context.error || "Failed to get context" },
+            ],
+          };
+        }
+
+        const { connection, keypair, realmAddress } = context;
+
+        // Validate amount
+        if (isNaN(amount) || amount <= 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Invalid amount. Please provide a positive number.",
+              },
+            ],
+          };
+        }
+
+        // Get DAO info to determine where to send funds
+        const realmInfoRes = await GovernanceService.getRealmInfo(
+          connection,
+          realmAddress!
+        );
+
+        if (!realmInfoRes.success || !realmInfoRes.data) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
+              },
+            ],
+          };
+        }
+
+        const realmInfo = realmInfoRes.data;
+
+        // Determine target based on whether this is an integrated DAO
+        let targetAddress: PublicKey;
+        let targetType: string;
+
+        if (realmInfo.isIntegrated && realmInfo.vaultAddress) {
+          // For integrated DAOs, fund the multisig vault
+          targetAddress = realmInfo.vaultAddress;
+          targetType = "Squads multisig vault";
+        } else {
+          // For standard DAOs, fund the treasury
+          targetAddress = realmInfo.treasuryAddress;
+          targetType = "native treasury";
+        }
+
+        // Fund target
+        const fundRes = await GovernanceService.fundTreasury(
+          connection,
+          keypair,
+          targetAddress,
+          amount
+        );
+
+        if (!fundRes.success) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to fund: ${fundRes.error?.message}`,
+              },
+            ],
+          };
+        }
+
         return {
           content: [
             {
               type: "text",
-              text: "No wallet configured. Please create a wallet first.",
+              text: `Successfully funded ${targetType} with ${amount} SOL!\nTransaction: ${fundRes.data}`,
             },
           ],
         };
-      }
-
-      // Check config
-      const configRes = await ConfigService.getConfig();
-      if (
-        !configRes.success ||
-        !configRes.data ||
-        !configRes.data.dao?.activeRealm
-      ) {
+      } catch (error) {
         return {
-          content: [
-            {
-              type: "text",
-              text: "No DAO configured. Use setActiveRealm to select one.",
-            },
-          ],
+          content: [{ type: "text", text: `Failed to fund: ${error}` }],
         };
       }
-
-      const connectionRes = await ConnectionService.getConnection();
-      if (!connectionRes.success || !connectionRes.data) {
-        return {
-          content: [{ type: "text", text: "Failed to establish connection" }],
-        };
-      }
-
-      const connection = connectionRes.data;
-      const keypair = WalletService.getKeypair(walletRes.data);
-      const realmAddress = new PublicKey(configRes.data.dao.activeRealm);
-
-      // Validate amount
-      if (isNaN(amount) || amount <= 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Invalid amount. Please provide a positive number.",
-            },
-          ],
-        };
-      }
-
-      // Get DAO info to determine where to send funds
-      const realmInfoRes = await GovernanceService.getRealmInfo(
-        connection,
-        realmAddress
-      );
-      if (!realmInfoRes.success || !realmInfoRes.data) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
-            },
-          ],
-        };
-      }
-
-      const realmInfo = realmInfoRes.data;
-
-      // Determine target based on whether this is an integrated DAO
-      let targetAddress: PublicKey;
-      let targetType: string;
-
-      if (realmInfo.isIntegrated && realmInfo.vaultAddress) {
-        // For integrated DAOs, fund the multisig vault
-        targetAddress = realmInfo.vaultAddress;
-        targetType = "Squads multisig vault";
-      } else {
-        // For standard DAOs, fund the treasury
-        targetAddress = realmInfo.treasuryAddress;
-        targetType = "native treasury";
-      }
-
-      // Fund target
-      const fundRes = await GovernanceService.fundTreasury(
-        connection,
-        keypair,
-        targetAddress,
-        amount
-      );
-
-      if (!fundRes.success) {
-        return {
-          content: [
-            { type: "text", text: `Failed to fund: ${fundRes.error?.message}` },
-          ],
-        };
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Successfully funded ${targetType} with ${amount} SOL!\nTransaction: ${fundRes.data}`,
-          },
-        ],
-      };
     }
   );
 
@@ -312,8 +295,8 @@ export function registerDaoTools(server: McpServer) {
     },
     async ({ address }) => {
       try {
+        // Validate realm address first
         let realmAddress: PublicKey;
-
         try {
           realmAddress = new PublicKey(address);
         } catch (e) {
@@ -322,20 +305,28 @@ export function registerDaoTools(server: McpServer) {
           };
         }
 
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
+        // Get connection only
+        const context = await useMcpContext({
+          requireWallet: false,
+          requireConfig: false,
+        });
+
+        if (!context.success) {
           return {
-            content: [{ type: "text", text: "Failed to establish connection" }],
+            content: [
+              { type: "text", text: context.error || "Failed to get context" },
+            ],
           };
         }
 
-        const connection = connectionRes.data;
+        const { connection } = context;
 
         // Get information about the realm
         const realmInfoRes = await GovernanceService.getRealmInfo(
           connection,
           realmAddress
         );
+
         if (!realmInfoRes.success || !realmInfoRes.data) {
           return {
             content: [
@@ -351,6 +342,7 @@ export function registerDaoTools(server: McpServer) {
         const configRes = await ConfigService.setActiveRealm(
           realmAddress.toBase58()
         );
+
         if (!configRes.success) {
           return {
             content: [
@@ -392,30 +384,19 @@ export function registerDaoTools(server: McpServer) {
     {},
     async () => {
       try {
-        // Load wallet and connection
-        const walletRes = await WalletService.loadWallet();
-        if (!walletRes.success || !walletRes.data) {
+        const context = await useMcpContext({ requireWallet: true });
+
+        if (!context.success) {
           return {
             content: [
-              {
-                type: "text",
-                text: "No wallet configured. Please create a wallet first.",
-              },
+              { type: "text", text: context.error || "Failed to get context" },
             ],
           };
         }
 
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
-          return {
-            content: [{ type: "text", text: "Failed to establish connection" }],
-          };
-        }
+        const { connection, keypair } = context;
 
-        const connection = connectionRes.data;
-        const keypair = WalletService.getKeypair(walletRes.data);
-
-        // Use the new getTokenOwnerRecords function to find all realms where the user is a member
+        // Use the getTokenOwnerRecords function to find all realms where the user is a member
         const tokenOwnerRecordsRes =
           await GovernanceService.getTokenOwnerRecords(connection, keypair);
 
@@ -504,7 +485,7 @@ export function registerDaoTools(server: McpServer) {
   );
 
   server.tool(
-    "fundToken",
+    "fundTokenToDAOTreasury",
     "Fund token accounts for the active DAO",
     {
       mint: z.string(),
@@ -513,35 +494,20 @@ export function registerDaoTools(server: McpServer) {
     },
     async ({ mint, amount, recipient }) => {
       try {
-        // Load wallet and connection
-        const walletRes = await WalletService.loadWallet();
-        if (!walletRes.success || !walletRes.data) {
+        const context = await useMcpContext({
+          requireWallet: true,
+          requireDao: true,
+        });
+
+        if (!context.success) {
           return {
             content: [
-              {
-                type: "text",
-                text: "No wallet configured. Please create a wallet first.",
-              },
+              { type: "text", text: context.error || "Failed to get context" },
             ],
           };
         }
 
-        // Check config
-        const configRes = await ConfigService.getConfig();
-        if (
-          !configRes.success ||
-          !configRes.data ||
-          !configRes.data.dao?.activeRealm
-        ) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "No DAO configured. Use useDao to select one.",
-              },
-            ],
-          };
-        }
+        const { connection, keypair, realmAddress } = context;
 
         // Check mint address
         if (!mint) {
@@ -549,17 +515,6 @@ export function registerDaoTools(server: McpServer) {
             content: [{ type: "text", text: "Token mint address is required" }],
           };
         }
-
-        const connectionRes = await ConnectionService.getConnection();
-        if (!connectionRes.success || !connectionRes.data) {
-          return {
-            content: [{ type: "text", text: "Failed to establish connection" }],
-          };
-        }
-
-        const connection = connectionRes.data;
-        const keypair = WalletService.getKeypair(walletRes.data);
-        const realmAddress = new PublicKey(configRes.data.dao.activeRealm);
 
         // Parse token mint
         let tokenMint: PublicKey;
@@ -586,8 +541,9 @@ export function registerDaoTools(server: McpServer) {
         // Get DAO info
         const realmInfoRes = await GovernanceService.getRealmInfo(
           connection,
-          realmAddress
+          realmAddress!
         );
+
         if (!realmInfoRes.success || !realmInfoRes.data) {
           return {
             content: [

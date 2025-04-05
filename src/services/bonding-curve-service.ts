@@ -108,12 +108,12 @@ export class BondingCurveService {
   /**
    * Find Mint address
    */
-  private findMintAddress(name: string, pubkey: PublicKey): PublicKey {
+  private findMintAddress(name: string, creator: PublicKey): PublicKey {
     const [mintAddress] = web3.PublicKey.findProgramAddressSync(
       [
         Buffer.from("bonding_curve_token"),
         Buffer.from(name),
-        pubkey.toBuffer(),
+        creator.toBuffer(),
       ],
       new PublicKey(this.idl.address)
     );
@@ -361,7 +361,7 @@ export class BondingCurveService {
       // Create the swap instruction
       const swapInstruction = await this.program.methods
         .swap({
-          baseIn: params.baseIn,
+          baseIn: !params.baseIn,
           amount: params.amount,
           minOutAmount: params.minOutAmount,
         })

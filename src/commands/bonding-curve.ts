@@ -324,4 +324,145 @@ export function registerBondingCurveCommands(program: Command) {
         getExplorerTx(tx.data.tx, (await ConnectionService.getCluster()).data!)
       );
     });
+
+  bondingCurveCommand
+    .command("swap")
+    .description("Buy or sell tokens using the bonding curve")
+    .option(
+      "-m, --mint <string>",
+      "Mint address of the token",
+      (value: string) => new PublicKey(value)
+    )
+    .option(
+      "-d, --direction <string>",
+      "Direction of swap: 'buy' (SOL to token) or 'sell' (token to SOL)",
+      (value: string) => {
+        if (value.toLowerCase() === "buy") return "buy";
+        if (value.toLowerCase() === "sell") return "sell";
+        throw new Error("Direction must be either 'buy' or 'sell'");
+      }
+    )
+    .option(
+      "-a, --amount <number>",
+      "Amount to swap (in SOL for buy, in tokens for sell)",
+      (value: string) => new BN(Number(value) * 1_000_000_000) // Convert to lamports/raw amount
+    )
+    .option(
+      "-min, --min-out <number>",
+      "Minimum output amount (slippage protection)",
+      (value: string) => new BN(Number(value) * 1_000_000_000),
+      new BN(0)
+    )
+    .action(async (options) => {
+      try {
+        if (!options.mint) {
+          console.log(chalk.red("Please provide a mint address"));
+          return;
+        }
+
+        if (!options.direction) {
+          console.log(
+            chalk.red("Please provide a swap direction (buy or sell)")
+          );
+          return;
+        }
+
+        if (!options.amount) {
+          console.log(chalk.red("Please provide an amount to swap"));
+          return;
+        }
+
+        // Load wallet and connection
+        const walletRes = await WalletService.loadWallet();
+        if (!walletRes.success || !walletRes.data) {
+          console.log(
+            chalk.red("No wallet configured. Please create a wallet first.")
+          );
+          return;
+        }
+
+        const connectionRes = await ConnectionService.getConnection();
+        if (!connectionRes.success || !connectionRes.data) {
+          console.log(chalk.red("Failed to establish connection"));
+          return;
+        }
+
+        const connection = connectionRes.data;
+        const keypair = WalletService.getKeypair(walletRes.data);
+        const bondingCurveService = new BondingCurveService(
+          connection,
+          new Wallet(keypair),
+          "confirmed",
+          IDL as Idl
+        );
+
+        // Get bonding curve data to show pricing info
+        const bondingCurveData = await bondingCurveService.getBondingCurve(
+          options.mint
+        );
+        if (!bondingCurveData.success || !bondingCurveData.data) {
+          console.log(chalk.red("Failed to get bonding curve data"));
+          return;
+        }
+
+        // Prepare swap parameters
+        const isBaseIn = options.direction === "buy"; // true for buy (SOL in), false for sell (token in)
+
+        console.log(chalk.blue("Executing swap..."));
+        console.log(
+          chalk.blue(
+            `Direction: ${
+              isBaseIn ? "Buy (SOL → Token)" : "Sell (Token → SOL)"
+            }`
+          )
+        );
+        console.log(
+          chalk.blue(
+            `Amount: ${options.amount.div(new BN(1_000_000_000)).toString()} ${
+              isBaseIn ? "SOL" : "tokens"
+            }`
+          )
+        );
+
+        const tx = await bondingCurveService.swap(options.mint, {
+          baseIn: isBaseIn,
+          amount: options.amount,
+          minOutAmount: options.minOut,
+        });
+
+        if (!tx.success || !tx.data) {
+          console.log(chalk.red("Swap failed"));
+          console.log(chalk.red(tx.error?.message));
+          return;
+        }
+
+        console.log(chalk.green("Swap executed successfully!"));
+        const cluster = await ConnectionService.getCluster();
+        console.log(
+          chalk.blue(
+            `Transaction signature: ${getExplorerTx(tx.data, cluster.data!)}`
+          )
+        );
+
+        // Get updated bonding curve data to show new price
+        const updatedData = await bondingCurveService.getBondingCurve(
+          options.mint
+        );
+        if (updatedData.success && updatedData.data) {
+          console.log(chalk.green("Current bonding curve state:"));
+          console.log(
+            chalk.green("Token reserves:"),
+            updatedData.data.realTokenReserves.div(new BN(1_000_000)).toString()
+          );
+          console.log(
+            chalk.green("SOL reserves:"),
+            updatedData.data.realSolReserves
+              .div(new BN(1_000_000_000))
+              .toString()
+          );
+        }
+      } catch (error) {
+        console.error(chalk.red("Failed to execute swap:"), error);
+      }
+    });
 }

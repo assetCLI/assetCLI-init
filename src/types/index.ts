@@ -70,7 +70,7 @@ export interface BondingCurveInitParams {
 export interface CreateBondingCurveParams {
   name: string;
   symbol: string;
-  path: string;
+  buff?: Buffer<ArrayBufferLike>;
   startTime?: number | undefined; // Optional timestamp
   solRaiseTarget: BN;
   // DAO proposal data

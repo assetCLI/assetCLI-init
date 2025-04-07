@@ -7,6 +7,8 @@ import { Command } from "commander";
 import { ConnectionService } from "../services/connection-service";
 import { WalletService } from "../services/wallet-service";
 import BN from "bn.js";
+import fs from "fs";
+import os from "os";
 import { PublicKey } from "@solana/web3.js";
 import { BondingCurveService } from "../services/bonding-curve-service";
 import { Idl, Wallet } from "@coral-xyz/anchor";
@@ -14,6 +16,7 @@ import { Idl, Wallet } from "@coral-xyz/anchor";
 import * as IDL from "../../idls/bonding_curve.json";
 import { getExplorerTx } from "../utils/get-explorer-tx";
 import { GovernanceService } from "../services/governance-service";
+import path from "path";
 
 export function registerBondingCurveCommands(program: Command) {
   const bondingCurveCommand = program
@@ -250,6 +253,8 @@ export function registerBondingCurveCommands(program: Command) {
 
       const connection = connectionRes.data;
       const keypair = WalletService.getKeypair(walletRes.data);
+      const rootDir = process.cwd();
+      const buff = fs.readFileSync(path.join(rootDir, options.file));
 
       // // Create a namespace for the DAO
       // Should change this for now it is hardcoded (kinda)
@@ -298,12 +303,13 @@ export function registerBondingCurveCommands(program: Command) {
           options.description
         }`
       );
+
       const tx = await bondingCurveSerice.createBondingCurve({
         daoDescription: options.description,
         daoName: options.name,
         name: options.name,
         symbol: options.symbol,
-        path: options.file,
+        buff,
         startTime: options.startTime,
         solRaiseTarget: options.solRaiseTarget,
         realmAddress: realmAddress,

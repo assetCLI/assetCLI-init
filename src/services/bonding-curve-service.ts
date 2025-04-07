@@ -205,22 +205,19 @@ export class BondingCurveService {
       const globalStateAddress = this.findGlobalStatePda();
       let uploadErrors;
       let uri = "https://avatars.githubusercontent.com/u/84874526?v=4";
-      try {
-        // Upload to Irys
-        const bufferFile = fs.readFileSync(
-          path.join(os.homedir(), params.path)
-        );
-        const file = createGenericFile(bufferFile, mintKey.toString());
-
-        const umi = createUmi(this.provider.connection).use(irysUploader());
-        const umiKeypair = umi.eddsa.createKeypairFromSecretKey(
-          this.provider.wallet.payer?.secretKey!
-        );
-        const umiSigner = createSignerFromKeypair(umi, umiKeypair);
-        umi.use(signerIdentity(umiSigner));
-        [uri] = await umi.uploader.upload([file]);
-      } catch (error) {
-        uploadErrors = error;
+      if (params.buff) {
+        try {
+          const file = createGenericFile(params.buff, mintKey.toString());
+          const umi = createUmi(this.provider.connection).use(irysUploader());
+          const umiKeypair = umi.eddsa.createKeypairFromSecretKey(
+            this.provider.wallet.payer?.secretKey!
+          );
+          const umiSigner = createSignerFromKeypair(umi, umiKeypair);
+          umi.use(signerIdentity(umiSigner));
+          [uri] = await umi.uploader.upload([file]);
+        } catch (error) {
+          uploadErrors = error;
+        }
       }
 
       // Find bonding curve token account

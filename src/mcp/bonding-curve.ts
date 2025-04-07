@@ -12,8 +12,8 @@ import { GovernanceService } from "../services/governance-service";
 export function registerBondingCurveTools(server: McpServer) {
   // Get global settings of the bonding curve
   server.tool(
-    "getBondingCurveSettings",
-    "Get global settings of the bonding curve protocol",
+    "getBondingCurveGlobalInfo",
+    "Get global info of the bonding curve protocol",
     {},
     async () => {
       try {
@@ -88,7 +88,7 @@ export function registerBondingCurveTools(server: McpServer) {
     {
       name: z.string(),
       symbol: z.string(),
-      imagePath: z.string(),
+      svg: z.string().optional(),
       startTime: z.number().optional(),
       solRaiseTarget: z.number(),
       description: z.string().optional(),
@@ -111,7 +111,23 @@ export function registerBondingCurveTools(server: McpServer) {
             ],
           };
         }
-
+        // Check if SVG was provided and convert it to Buffer
+        let svgBuffer: Buffer | undefined;
+        if (options.svg) {
+          try {
+            // Convert the svg string to Buffer
+            svgBuffer = Buffer.from(options.svg);
+          } catch (error) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Failed to process SVG: ${error}`,
+                },
+              ],
+            };
+          }
+        }
         const { connection, keypair } = context;
         const bondingCurveService = new BondingCurveService(
           connection,
@@ -159,12 +175,13 @@ export function registerBondingCurveTools(server: McpServer) {
         const tx = await bondingCurveService.createBondingCurve({
           name: options.name,
           symbol: options.symbol,
-          path: options.imagePath,
           startTime: startTime,
           solRaiseTarget: solRaiseTarget,
           daoName: options.name,
+          buff: svgBuffer || Buffer.from(""),
           daoDescription:
-            options.description || `A DAO created for ${options.name}`,
+            options.description ||
+            `A realm created for ${options.name} using AssetCLI`,
           realmAddress: realmPubkey,
           twitterHandle: options.twitterHandle,
           bullishThesis: options.bullishThesis || "Bullish thesis",

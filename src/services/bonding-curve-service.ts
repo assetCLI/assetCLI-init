@@ -193,11 +193,6 @@ export class BondingCurveService {
         params.name,
         this.provider.wallet.publicKey
       );
-
-      console.log(
-        `Creating bonding curve with deterministic mint: ${mintKey.toString()}`
-      );
-
       // Find all necessary PDAs using helper methods
       const metadataAddress = this.findMetadataAddress(mintKey);
       const bondingCurvePda = this.findBondingCurvePda(mintKey);
@@ -235,12 +230,6 @@ export class BondingCurveService {
           params.startTime || 0,
           currentTime + 120 // Add 2 minutes buffer to ensure it's in the future
         )
-      );
-
-      console.log(
-        `Using start time: ${startTime.toString()} (${new Date(
-          startTime.toNumber() * 1000
-        )})`
       );
 
       // Construct parameters exactly as expected by the contract
@@ -292,11 +281,9 @@ export class BondingCurveService {
         },
       };
     } catch (error: any) {
-      console.error("Error creating bonding curve:", error);
 
       // Enhanced error logging for better debugging
       if (error.logs) {
-        console.error("Transaction logs:", error.logs);
 
         // Extract and display the specific error from Anchor program
         const errorLog = error.logs.find(
@@ -306,7 +293,6 @@ export class BondingCurveService {
             log.includes("Error Message")
         );
         if (errorLog) {
-          console.error("Specific error:", errorLog);
         }
       }
 

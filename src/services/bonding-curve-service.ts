@@ -29,10 +29,12 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
+  getTokenMetadata,
 } from "@solana/spl-token";
 import { ServiceResponse } from "../types/service-types";
 import { METADATA_PROGRAM_ID } from "../utils/constants";
 import {
+  BondingCurveDaoProposal,
   BondingCurveInitParams,
   CreateBondingCurveParams,
   SwapParams,
@@ -470,6 +472,80 @@ export class BondingCurveService {
         error: {
           message: `Failed to get global settings: ${error}`,
           details: error,
+        },
+      };
+    }
+  }
+
+  /**
+   * Get tokens on curve
+   */
+  async getTokensOnCurve(): Promise<
+    ServiceResponse<
+      {
+        mintAddress: PublicKey;
+        symbol: string;
+        uri: string;
+        bondingCurveAddress: PublicKey;
+        creator: PublicKey;
+        daoProposal: BondingCurveDaoProposal;
+        daoProposalAddress: PublicKey;
+      }[]
+    >
+  > {
+    try {
+      const allBondingCurves = await this.program.account.bondingCurve.all();
+
+      const tokensOnCurve = await Promise.all(
+        allBondingCurves.map(async (curve) => {
+          const mintAddress = new PublicKey(curve.account.mint);
+          const bondingCurveAddress = new PublicKey(curve.publicKey);
+          const daoProposalAddress = this.findDaoProposalPda(
+            curve.account.mint
+          );
+
+          const daoProposalPda = this.findDaoProposalPda(curve.account.mint);
+          const daoProposal = await this.program.account.daoProposal.fetch(
+            daoProposalPda
+          );
+          let metadata = await getTokenMetadata(
+            this.provider.connection,
+            mintAddress
+          );
+
+          return {
+            mintAddress,
+            bondingCurveAddress,
+            creator: curve.account.creator,
+            symbol: metadata?.symbol || "",
+            uri: metadata?.uri || "",
+            daoProposalAddress,
+            daoProposal: {
+              name: daoProposal.name,
+              description: daoProposal.description,
+              realmAddress: daoProposal.realmAddress,
+              twitterHandle: daoProposal.twitterHandle || undefined,
+              solRaiseTarget: curve.account.solRaiseTarget,
+              discordLink: daoProposal.discordLink || undefined,
+              websiteUrl: daoProposal.websiteUrl || undefined,
+              bullishThesis: daoProposal.bullishThesis || undefined,
+              startTime: curve.account.startTime.toNumber() || undefined,
+              logoUri: daoProposal.logoUri || undefined,
+            },
+          };
+        })
+      );
+
+      return {
+        success: true,
+        data: tokensOnCurve,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: {
+          message: `Failed to get tokens on curve: ${err}`,
+          details: err,
         },
       };
     }

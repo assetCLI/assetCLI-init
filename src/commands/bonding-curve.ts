@@ -465,4 +465,46 @@ export function registerBondingCurveCommands(program: Command) {
         console.error(chalk.red("Failed to execute swap:"), error);
       }
     });
+
+  bondingCurveCommand
+    .command("get-all-tokens")
+    .description("Retrieve all tokens available in the bonding curve")
+    .action(async () => {
+      try {
+        // Load wallet and connection
+        const walletRes = await WalletService.loadWallet();
+        if (!walletRes.success || !walletRes.data) {
+          console.log(
+            chalk.red("No wallet configured. Please create a wallet first.")
+          );
+          return;
+        }
+
+        const connectionRes = await ConnectionService.getConnection();
+        if (!connectionRes.success || !connectionRes.data) {
+          console.log(chalk.red("Failed to establish connection"));
+          return;
+        }
+
+        const connection = connectionRes.data;
+        const keypair = WalletService.getKeypair(walletRes.data);
+        const bondingCurveService = new BondingCurveService(
+          connection,
+          new Wallet(keypair),
+          "confirmed",
+          IDL as Idl
+        );
+        const tokens = await bondingCurveService.getTokensOnCurve();
+        if (!tokens.success || !tokens.data) {
+          console.log(chalk.red("Failed to retrieve tokens"));
+          return;
+        }
+        console.log(chalk.green("Available tokens:"));
+        tokens.data.forEach((token) => {
+          console.log(chalk.green(`- ${token.mintAddress.toString()}`));
+        });
+      } catch (error) {
+        console.error(chalk.red("Failed to retrieve tokens:"), error);
+      }
+    });
 }

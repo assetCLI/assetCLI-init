@@ -71,23 +71,36 @@ export interface CreateBondingCurveParams {
   name: string;
   symbol: string;
   path: string;
-  startTime?: number; // Optional timestamp
+  startTime?: number | undefined; // Optional timestamp
   solRaiseTarget: BN;
   // DAO proposal data
   daoName: string;
   daoDescription: string;
   realmAddress: PublicKey;
-  twitterHandle?: string;
-  discordLink?: string;
-  websiteUrl?: string;
-  logoUri?: string;
-  founderName?: string;
-  founderTwitter?: string;
-  bullishThesis?: string;
+  twitterHandle?: string | undefined;
+  discordLink?: string | undefined;
+  websiteUrl?: string | undefined;
+  logoUri?: string | undefined;
+  founderName?: string | undefined;
+  founderTwitter?: string | undefined;
+  bullishThesis?: string | undefined;
 }
 
 export interface SwapParams {
   baseIn: boolean; // true for selling tokens, false for buying tokens
   amount: BN;
   minOutAmount: BN;
+}
+
+export interface BondingCurveDaoProposal {
+  name: string;
+  description: string;
+  realmAddress: PublicKey;
+  twitterHandle?: string | undefined;
+  discordLink?: string | undefined;
+  websiteUrl?: string | undefined;
+  logoUri?: string | undefined;
+  bullishThesis?: string | undefined;
+  solRaiseTarget: BN;
+  startTime?: number | undefined; // Optional timestamp
 }

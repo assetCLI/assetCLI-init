@@ -10,7 +10,6 @@ export interface WalletConfig {
 export interface DaoConfig {
   activeRealm?: string;
   activeMultisig?: string; // For backwards compatibility
-  activeMultisig?: string; // For backwards compatibility
   cluster: Cluster;
   endpoint: string;
 }

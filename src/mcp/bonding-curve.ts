@@ -4,7 +4,7 @@ import { ConfigService } from "../services/config-service";
 import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { BondingCurveService } from "../services/bonding-curve-service";
 import { useMcpContext } from "../utils/mcp-hooks";
-import { BN, Idl } from "@coral-xyz/anchor";
+import { BN, Idl, Wallet } from "@coral-xyz/anchor";
 import * as IDL from "../../idls/bonding_curve.json";
 import { GovernanceService } from "../services/governance-service";
 
@@ -35,12 +35,7 @@ export function registerBondingCurveTools(server: McpServer) {
         const { connection, keypair } = context;
         const bondingCurveService = new BondingCurveService(
           connection,
-          {
-            publicKey: keypair.publicKey,
-            signTransaction: async (tx) => tx,
-            signAllTransactions: async (txs) => txs,
-            payer: keypair,
-          },
+          new Wallet(keypair),
           "confirmed",
           IDL as Idl
         );
@@ -84,7 +79,7 @@ export function registerBondingCurveTools(server: McpServer) {
   // Launch a new token on the bonding curve
   server.tool(
     "launchToken",
-    "Create a new token on the bonding curve",
+    "Create a new token/dao-token on the bonding curve",
     {
       name: z.string(),
       symbol: z.string(),
@@ -131,12 +126,7 @@ export function registerBondingCurveTools(server: McpServer) {
         const { connection, keypair } = context;
         const bondingCurveService = new BondingCurveService(
           connection,
-          {
-            publicKey: keypair.publicKey,
-            signTransaction: async (tx) => tx,
-            signAllTransactions: async (txs) => txs,
-            payer: keypair,
-          },
+          new Wallet(keypair),
           "confirmed",
           IDL as Idl
         );
@@ -258,12 +248,7 @@ export function registerBondingCurveTools(server: McpServer) {
         const { connection, keypair } = context;
         const bondingCurveService = new BondingCurveService(
           connection,
-          {
-            publicKey: keypair.publicKey,
-            signTransaction: async (tx) => tx,
-            signAllTransactions: async (txs) => txs,
-            payer: keypair,
-          },
+          new Wallet(keypair),
           "confirmed",
           IDL as Idl
         );
@@ -390,12 +375,7 @@ export function registerBondingCurveTools(server: McpServer) {
         const { connection, keypair } = context;
         const bondingCurveService = new BondingCurveService(
           connection,
-          {
-            publicKey: keypair.publicKey,
-            signTransaction: async (tx) => tx,
-            signAllTransactions: async (txs) => txs,
-            payer: keypair,
-          },
+          new Wallet(keypair),
           "confirmed",
           IDL as Idl
         );
@@ -434,18 +414,17 @@ export function registerBondingCurveTools(server: McpServer) {
         // Format the data for display
         const data = bondingCurveData.data;
         const formattedData = {
-          mint: mintPubkey.toString(),
+          mint: mintPubkey.toBase58(),
           name: data.name,
           symbol: data.symbol,
           tokenDecimals: data.tokenDecimals,
-          realTokenReserves: data.realTokenReserves.toString(),
-          realSolReserves: data.realSolReserves.toString(),
-          virtualTokenReserves: data.virtualTokenReserves.toString(),
-          virtualSolReserves: data.virtualSolReserves.toString(),
-          startTime: data.startTime.toString(),
-          solRaiseTarget: data.solRaiseTarget.toString(),
-          creator: data.creator.toString(),
-          createdAt: data.createdAt.toString(),
+          realTokenReserves: data.realTokenReserves.toNumber(),
+          realSolReserves: data.realSolReserves.toNumber(),
+          virtualTokenReserves: data.virtualTokenReserves.toNumber(),
+          virtualSolReserves: data.virtualSolReserves.toNumber(),
+          startTime: data.startTime.toNumber(),
+          solRaiseTarget: data.solRaiseTarget.toNumber(),
+          creator: data.creator.toBase58(),
         };
 
         // Add DAO proposal data if available
@@ -622,12 +601,7 @@ export function registerBondingCurveTools(server: McpServer) {
         // Get the bonding curve service
         const bondingCurveService = new BondingCurveService(
           connection,
-          {
-            publicKey: keypair.publicKey,
-            signTransaction: async (tx) => tx,
-            signAllTransactions: async (txs) => txs,
-            payer: keypair,
-          },
+          new Wallet(keypair),
           "confirmed",
           IDL as Idl
         );

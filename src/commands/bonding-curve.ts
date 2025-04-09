@@ -212,12 +212,6 @@ export function registerBondingCurveCommands(program: Command) {
     )
     .option("-f, --file <string>", "File path to the token image")
     .option(
-      "-st, --start-time <number>",
-      "Start time of the token sale (timestamp in seconds)",
-      (value: string) => Number(value),
-      Math.floor(Math.floor(Date.now() / 1000) + 60)
-    )
-    .option(
       "-st, --sol-raise-target <number>",
       "SOL raise target",
       (value: string) => new BN(Number(value) * 1_000_000_000),
@@ -256,61 +250,58 @@ export function registerBondingCurveCommands(program: Command) {
       const rootDir = process.cwd();
       const buff = fs.readFileSync(path.join(rootDir, options.file));
 
-      // // Create a namespace for the DAO
-      // Should change this for now it is hardcoded (kinda)
-      const daoNamespace = `assetCLI-${options.name}-${options.symbol}`;
-      const realmCreationRes = await GovernanceService.initializeDAO(
-        connection,
-        keypair,
-        daoNamespace,
-        [keypair.publicKey],
-        1
-      );
-
-      if (!realmCreationRes.success || !realmCreationRes.data) {
-        console.log(chalk.red("Failed to create DAO"));
-        console.log(chalk.red(realmCreationRes.error));
-        return;
-      }
-
-      console.log(chalk.green("Realm DAO created successfully!"));
-      console.log(
-        chalk.green("Realm address:"),
-        realmCreationRes.data.realmAddress.toBase58(),
-        "\n",
-        "Transaction signature:",
-        getExplorerTx(
-          realmCreationRes.data.transactionSignature,
-          (await ConnectionService.getCluster()).data!
-        )
-      );
-      const realmAddress = realmCreationRes.data.realmAddress;
-
       // Create the bonding curve
-      const bondingCurveSerice = new BondingCurveService(
+      const bondingCurveService = new BondingCurveService(
         connection,
         new Wallet(keypair),
         "confirmed",
         IDL as Idl
       );
+
+      // // Create a namespace for the DAO
+      const daoNamespace = `assetCLI-${options.name}-${options.symbol}`;
+      const realmAddress = GovernanceService.getRealmPublicKeyFromName(
+        connection,
+        daoNamespace
+      );
+
+      // Check if the DAO already exists
+      const realmExists = await GovernanceService.getRealmInfo(
+        connection,
+        realmAddress
+      );
+      if (realmExists.success && realmExists.data) {
+        console.log(
+          chalk.red("DAO already exists with the name:"),
+          realmExists.data.name
+        );
+        console.log(
+          chalk.red("Realm address:"),
+          realmExists.data.realmAddress.toBase58()
+        );
+        console.log(
+          chalk.yellow(
+            "Please use a different name or delete the existing DAO."
+          )
+        );
+        return;
+      }
+
       console.log(
         chalk.blue("Creating bonding curve..."),
         `\nName: ${options.name}\nSymbol: ${options.symbol}\nFile: ${
           options.file
-        }\nStart time: ${
-          options.startTime
         }\nSOL raise target: ${options.solRaiseTarget.toString()}\nDescription: ${
           options.description
         }`
       );
 
-      const tx = await bondingCurveSerice.createBondingCurve({
+      const tx = await bondingCurveService.createBondingCurve({
         daoDescription: options.description,
         daoName: options.name,
         name: options.name,
         symbol: options.symbol,
         buff,
-        startTime: options.startTime,
         solRaiseTarget: options.solRaiseTarget,
         realmAddress: realmAddress,
         twitterHandle: options.xAccount,
@@ -328,6 +319,32 @@ export function registerBondingCurveCommands(program: Command) {
       console.log(
         chalk.green("Transaction signature:"),
         getExplorerTx(tx.data.tx, (await ConnectionService.getCluster()).data!)
+      );
+
+      // Create the DAO
+      const realmCreationRes = await GovernanceService.initializeNamespaceDao(
+        connection,
+        keypair,
+        daoNamespace,
+        bondingCurveService.findMintAddress(options.name, keypair.publicKey),
+        [keypair.publicKey]
+      );
+      if (!realmCreationRes.success || !realmCreationRes.data) {
+        console.log(chalk.red("Failed to create DAO"));
+        console.log(chalk.red(realmCreationRes.error));
+        return;
+      }
+
+      console.log(chalk.green("Realm DAO created successfully!"));
+      console.log(
+        chalk.green("Realm address:"),
+        realmCreationRes.data.realmAddress.toBase58(),
+        "\n",
+        "Transaction signature:",
+        getExplorerTx(
+          realmCreationRes.data.transactionSignature,
+          (await ConnectionService.getCluster()).data!
+        )
       );
     });
 

@@ -40,6 +40,7 @@ import {
   SwapParams,
 } from "../types";
 import path from "path";
+import { getSolanaTimestamp } from "../utils/get-solana-timestamp";
 
 export class BondingCurveService {
   private program: Program<BondingCurve>;
@@ -110,7 +111,7 @@ export class BondingCurveService {
   /**
    * Find Mint address
    */
-  private findMintAddress(name: string, creator: PublicKey): PublicKey {
+  public findMintAddress(name: string, creator: PublicKey): PublicKey {
     const [mintAddress] = web3.PublicKey.findProgramAddressSync(
       [
         Buffer.from("bonding_curve_token"),
@@ -222,15 +223,11 @@ export class BondingCurveService {
         true
       );
 
-      // IMPORTANT: Set start time to at least 2 minutes in the future to avoid validation errors
+      // IMPORTANT: Set start time to at least 1 minute in the future to avoid validation errors
       // This gives enough time for transaction processing
-      const currentTime = Math.floor(Date.now() / 1000);
-      const startTime = new BN(
-        Math.max(
-          params.startTime || 0,
-          currentTime + 120 // Add 2 minutes buffer to ensure it's in the future
-        )
-      );
+      const currentTime =
+        (await getSolanaTimestamp(this.provider.connection)) + 60;
+      const startTime = new BN(currentTime);
 
       // Construct parameters exactly as expected by the contract
       const bondingCurveParams = {
@@ -241,7 +238,8 @@ export class BondingCurveService {
         solRaiseTarget: params.solRaiseTarget,
         daoName: params.daoName || params.name,
         daoDescription:
-          params.daoDescription || "DAO created from bonding curve",
+          params.daoDescription ||
+          "DAO created from bonding curve using assetCLI",
         realmAddress: params.realmAddress,
         // Use null (not empty strings) for optional fields
         twitterHandle: params.twitterHandle || null,
@@ -270,6 +268,7 @@ export class BondingCurveService {
           rent: web3.SYSVAR_RENT_PUBKEY,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         })
+        .signers([this.provider.wallet.payer!])
         .rpc({ skipPreflight: true });
 
       return {
@@ -281,10 +280,8 @@ export class BondingCurveService {
         },
       };
     } catch (error: any) {
-
       // Enhanced error logging for better debugging
       if (error.logs) {
-
         // Extract and display the specific error from Anchor program
         const errorLog = error.logs.find(
           (log: any) =>
@@ -488,25 +485,54 @@ export class BondingCurveService {
           );
 
           const daoProposalPda = this.findDaoProposalPda(curve.account.mint);
-          const daoProposal = await this.program.account.daoProposal.fetch(
-            daoProposalPda
-          );
-          let metadata = await getTokenMetadata(
-            this.provider.connection,
-            mintAddress
-          );
+
+          // Fetch DAO proposal data
+          let daoProposal;
+          try {
+            daoProposal = await this.program.account.daoProposal.fetch(
+              daoProposalPda
+            );
+          } catch (err) {
+            daoProposal = {
+              name: "Unknown",
+              description: "",
+              realmAddress: null,
+              twitterHandle: null,
+              discordLink: null,
+              websiteUrl: null,
+              bullishThesis: null,
+              logoUri: null,
+            };
+          }
+
+          // Safely fetch metadata - handle errors gracefully
+          let metadata = { symbol: "", uri: "" };
+          try {
+            const tokenMetadata = await getTokenMetadata(
+              this.provider.connection,
+              mintAddress
+            );
+            if (tokenMetadata) {
+              metadata.symbol = tokenMetadata.symbol || "";
+              metadata.uri = tokenMetadata.uri || "";
+            }
+          } catch (err) {
+            // some error here
+          }
 
           return {
             mintAddress,
             bondingCurveAddress,
             creator: curve.account.creator,
-            symbol: metadata?.symbol || "",
-            uri: metadata?.uri || "",
+            symbol: metadata.symbol,
+            uri: metadata.uri,
             daoProposalAddress,
             daoProposal: {
               name: daoProposal.name,
               description: daoProposal.description,
-              realmAddress: daoProposal.realmAddress,
+              realmAddress:
+                daoProposal.realmAddress ??
+                new web3.PublicKey("11111111111111111111111111111111"),
               twitterHandle: daoProposal.twitterHandle || undefined,
               solRaiseTarget: curve.account.solRaiseTarget,
               discordLink: daoProposal.discordLink || undefined,

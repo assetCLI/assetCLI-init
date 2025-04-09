@@ -13,10 +13,8 @@ use anchor_spl::{
 use crate::{
     errors::ContractError,
     BondingCurve,
-    BondingCurveLockerCtx,
     CreateBondingCurveParams,
     Global,
-    IntoBondingCurveLockerCtx,
     ProgramStatus,
     DAOProposal, // New import
 };
@@ -29,7 +27,7 @@ pub struct CreateBondingCurve<'info> {
         payer = creator,
         mint::decimals = global.mint_decimals,
         mint::authority = dao_proposal, // Change authority to dao_proposal
-        mint::freeze_authority = bonding_curve, // Keep freeze authority with bonding curve for now,
+        mint::freeze_authority = dao_proposal, // Keep freeze authority with bonding curve for now,
         seeds = [
             BondingCurve::TOKEN_PREFIX.as_bytes(),
             params.name.as_bytes(),
@@ -87,22 +85,6 @@ pub struct CreateBondingCurve<'info> {
     pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
-impl<'info> IntoBondingCurveLockerCtx<'info> for CreateBondingCurve<'info> {
-    fn into_bonding_curve_locker_ctx(
-        &self,
-        bonding_curve_bump: u8
-    ) -> BondingCurveLockerCtx<'info> {
-        BondingCurveLockerCtx {
-            bonding_curve_bump,
-            mint: self.mint.clone(),
-            bonding_curve: self.bonding_curve.clone(),
-            bonding_curve_token_account: self.bonding_curve_token_account.clone(),
-            token_program: self.token_program.clone(),
-            global: self.global.clone(),
-        }
-    }
-}
-
 impl<'info> CreateBondingCurve<'info> {
     pub fn validate(&self, params: &CreateBondingCurveParams) -> Result<()> {
         let clock = Clock::get()?;
@@ -118,9 +100,11 @@ impl<'info> CreateBondingCurve<'info> {
         params: CreateBondingCurveParams,
         bumps: &CreateBondingCurveBumps
     ) -> Result<()> {
+        // Validate the parameters
+        self.validate(&params)?;
         let clock = Clock::get()?;
 
-        // First initialize the DAOProposal
+        // Initialize the DAOProposal
         self.initialize_dao_proposal(&params, bumps.dao_proposal)?;
 
         // Then update the bonding curve
@@ -133,16 +117,12 @@ impl<'info> CreateBondingCurve<'info> {
             bumps.bonding_curve
         );
 
-        self.validate(&params)?;
-
         // Initialize metadata and mint tokens
         self.initialize_meta(&params)?;
-        msg!("Initialize meta complete");
 
         // Use dao_proposal as the mint authority
         let mint_authority_seeds = self.dao_proposal.get_signer_seeds();
         let mint_auth_signer_seeds: &[&[&[u8]]] = &[&mint_authority_seeds];
-
         mint_to(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
@@ -155,16 +135,6 @@ impl<'info> CreateBondingCurve<'info> {
             ),
             self.bonding_curve.token_total_supply
         )?;
-        msg!("Mint to complete");
-
-        let locker = &mut self.into_bonding_curve_locker_ctx(bumps.bonding_curve);
-        locker.lock_ata()?;
-        msg!("Lock ATA complete");
-
-        msg!("Checking invariant");
-        BondingCurve::invariant(locker)?;
-
-        msg!("CreateBondingCurve::process: done");
         Ok(())
     }
 
@@ -175,21 +145,21 @@ impl<'info> CreateBondingCurve<'info> {
         dao_proposal_bump: u8
     ) -> Result<()> {
         // Initialize DAO proposal with provided parameters
-        self.dao_proposal.mint = self.mint.key();
-        self.dao_proposal.creator = *self.creator.key;
-        self.dao_proposal.name = params.dao_name.clone();
-        self.dao_proposal.description = params.dao_description.clone();
-        self.dao_proposal.realm_address = params.realm_address.clone();
-        self.dao_proposal.twitter_handle = params.twitter_handle.clone();
-        self.dao_proposal.discord_link = params.discord_link.clone();
-        self.dao_proposal.website_url = params.website_url.clone();
-        self.dao_proposal.logo_uri = params.logo_uri.clone();
-        self.dao_proposal.founder_name = params.founder_name.clone();
-        self.dao_proposal.founder_twitter = params.founder_twitter.clone();
-        self.dao_proposal.bullish_thesis = params.bullish_thesis.clone();
-        self.dao_proposal.bump = dao_proposal_bump;
-
-        msg!("DAO Proposal initialized");
+        self.dao_proposal.set_inner(DAOProposal {
+            mint: self.mint.key(),
+            creator: *self.creator.key,
+            name: params.dao_name.clone(),
+            description: params.dao_description.clone(),
+            realm_address: params.realm_address.clone(),
+            twitter_handle: params.twitter_handle.clone(),
+            discord_link: params.discord_link.clone(),
+            website_url: params.website_url.clone(),
+            logo_uri: params.logo_uri.clone(),
+            founder_name: params.founder_name.clone(),
+            founder_twitter: params.founder_twitter.clone(),
+            bullish_thesis: params.bullish_thesis.clone(),
+            bump: dao_proposal_bump,
+        });
         Ok(())
     }
 

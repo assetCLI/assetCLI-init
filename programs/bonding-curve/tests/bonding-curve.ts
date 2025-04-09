@@ -15,7 +15,7 @@ import { findMetadataPda } from "@metaplex-foundation/mpl-token-metadata";
 import path from "path";
 import assert from "assert";
 
-describe("bonding-curve", () => {
+describe("bonding-curve", async () => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
   const provider = anchor.AnchorProvider.env();
@@ -166,8 +166,7 @@ describe("bonding-curve", () => {
   });
 
   it("Create a bonding curve", async () => {
-    // Current timestamp plus 60 seconds (to ensure we're in the future)
-    const currentTime = Math.floor(Date.now() / 1000) + 60;
+    const currentTime = (await getSolanaTimestamp(provider.connection)) + 10;
 
     // Create the bonding curve parameters including DAO proposal data
     const params = {
@@ -539,7 +538,9 @@ describe("bonding-curve", () => {
         name: metadataOfToken.name + "_small_target",
         symbol: metadataOfToken.symbol,
         uri: metadataOfToken.uri,
-        startTime: new anchor.BN(Math.floor(Date.now() / 1000)),
+        startTime: new anchor.BN(
+          (await getSolanaTimestamp(provider.connection)) + 10
+        ),
         solRaiseTarget: smallSolRaiseTarget,
 
         // DAO proposal params
@@ -701,9 +702,175 @@ describe("bonding-curve", () => {
     // and buying all tokens with a very large buy order
     // This would be a full test implementation, similar to the one above,
     // but ensuring that we reach token exhaustion before SOL target
+
+    const [fullTokenMint] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("bonding_curve_token"),
+        Buffer.from(metadataOfToken.name + "_full_token"),
+        wallet.publicKey.toBuffer(),
+      ],
+      program.programId
+    );
+    const [fullTokenBondingCurvePda] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("bonding_curve"), fullTokenMint.toBuffer()],
+        program.programId
+      );
+    const fullTokenMetadataAddress = new anchor.web3.PublicKey(
+      findMetadataPda(umi, {
+        mint: publicKey(fullTokenMint),
+      })[0].toString()
+    );
+
+    const fullBondingCurveTokenAccount = anchor.utils.token.associatedAddress({
+      mint: fullTokenMint,
+      owner: fullTokenBondingCurvePda,
+    });
+
+    // Find DAO proposal PDA for this new bonding curve
+    const [fullTargetDaoProposalPda] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("dao_proposal"), fullTokenMint.toBuffer()],
+        program.programId
+      );
+
+    const createTx = await program.methods
+      .createBondingCurve({
+        name: metadataOfToken.name + "_full_token",
+        symbol: metadataOfToken.symbol,
+        uri: metadataOfToken.uri,
+        startTime: new anchor.BN(
+          (await getSolanaTimestamp(provider.connection)) + 10
+        ),
+        solRaiseTarget: new anchor.BN(2000 * anchor.web3.LAMPORTS_PER_SOL),
+        // DAO proposal params
+        daoName: "Full Target DAO",
+        daoDescription: "A test DAO with full SOL target",
+        realmAddress: wallet.publicKey,
+        twitterHandle: "FullDaoTest",
+        discordLink: "https://discord.gg/fulldao",
+        websiteUrl: "https://fulldao.xyz",
+        logoUri: tokenUri,
+        founderName: "full Founder",
+        founderTwitter: "FullFoundertest",
+        bullishThesis:
+          "This DAO will test completion when SOL target is reached",
+      })
+      .accountsPartial({
+        mint: fullTokenMint,
+        creator: wallet.publicKey,
+        bondingCurve: fullTokenBondingCurvePda,
+        daoProposal: fullTargetDaoProposalPda, // Add dao proposal account
+        bondingCurveTokenAccount: fullBondingCurveTokenAccount,
+        global: globalStateAddress,
+        metadata: fullTokenMetadataAddress,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        tokenMetadataProgram: new anchor.web3.PublicKey(
+          "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        ),
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+      })
+      .signers([])
+      .rpc();
+    console.log(
+      `Create bonding curve transaction signature: ${getTransactionOnExplorer(createTx)}`
+    );
+
+    // Create a proper user token account for receiving tokens
+    let userTokenAccount = anchor.utils.token.associatedAddress({
+      mint: fullTokenMint,
+      owner: wallet.publicKey,
+    });
+
+    let userSolBalance = await provider.connection.getBalance(wallet.publicKey);
+    console.log(
+      "User SOL balance before swap:",
+      userSolBalance / anchor.web3.LAMPORTS_PER_SOL
+    );
+
+    const modifyComputeUnits =
+      anchor.web3.ComputeBudgetProgram.setComputeUnitLimit({
+        units: 1000000, // Increasing to 1M compute units
+      });
+
+    // Execute the buy with increased compute units
+    const tx = new anchor.web3.Transaction().add(modifyComputeUnits);
+
+    // Add the swap instruction
+    const swapInstruction = await program.methods
+      .swap({
+        baseIn: false,
+        amount: new anchor.BN(400_000_000_000), // Buying all tokens
+        minOutAmount: new anchor.BN(1),
+      })
+      .accountsPartial({
+        user: wallet.publicKey,
+        global: globalStateAddress,
+        feeReceiver: wallet.publicKey,
+        mint: fullTokenMint,
+        bondingCurve: fullTokenBondingCurvePda,
+        bondingCurveTokenAccount: fullBondingCurveTokenAccount,
+        userTokenAccount: userTokenAccount, // Corrected: use proper user token account
+        daoProposal: fullTargetDaoProposalPda, // Include dao proposal account
+        systemProgram: anchor.web3.SystemProgram.programId,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
+      })
+      .instruction();
+
+    tx.add(swapInstruction);
+
+    // Send the transaction
+    const signature = await provider.sendAndConfirm(tx);
+    console.log(
+      "Buy transaction signature: ",
+      getTransactionOnExplorer(signature)
+    );
+
+    // Fetch the bonding curve to verify it's marked as complete
+    const bondingCurve = await program.account.bondingCurve.fetch(
+      fullTokenBondingCurvePda
+    );
+    console.log("Bonding curve complete status:", bondingCurve.complete);
+    console.log(
+      "SOL raise target:",
+      (
+        bondingCurve.solRaiseTarget.toNumber() / anchor.web3.LAMPORTS_PER_SOL
+      ).toString()
+    );
+    console.log(
+      "Actual SOL raised:",
+      bondingCurve.realSolReserves.toString(),
+      "lamports (",
+      bondingCurve.realSolReserves.toNumber() / anchor.web3.LAMPORTS_PER_SOL,
+      "SOL)"
+    );
+    userSolBalance = await provider.connection.getBalance(wallet.publicKey);
+    console.log(
+      "User SOL balance after swap:",
+      userSolBalance / anchor.web3.LAMPORTS_PER_SOL
+    );
   });
 });
 
 function getTransactionOnExplorer(tx: string): string {
   return `https://explorer.solana.com/tx/${tx}?cluster=custom`;
+}
+
+async function getSolanaTimestamp(
+  connection: anchor.web3.Connection
+): Promise<number> {
+  const clockAccountInfo = await connection.getAccountInfo(
+    anchor.web3.SYSVAR_CLOCK_PUBKEY
+  );
+  if (!clockAccountInfo) throw new Error("Failed to fetch clock sysvar");
+
+  // Decode the Clock sysvar
+  const data = clockAccountInfo.data;
+  const unixTimestamp = data.readBigInt64LE(8); // Offset 8 is where the timestamp starts
+
+  return Number(unixTimestamp); // Convert BigInt to number
 }

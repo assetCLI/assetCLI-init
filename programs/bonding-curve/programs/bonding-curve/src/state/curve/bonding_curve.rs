@@ -39,8 +39,7 @@ pub struct CreateBondingCurveParams {
     pub uri: String,
     pub start_time: Option<i64>,
     pub sol_raise_target: u64,
-
-    // DAO Proposal metadata
+    // DaoProposal Metadat
     pub dao_name: String,
     pub dao_description: String,
     pub realm_address: Pubkey,
@@ -146,7 +145,6 @@ impl BondingCurve {
 
         let sol_raise_target = params.sol_raise_target;
 
-        // Important: Use full token supply for virtual reserves (100M),
         // but only 50% is actually tradable
         self.clone_from(
             &(BondingCurve {
@@ -185,33 +183,20 @@ impl BondingCurve {
         let mut token_amount = self.get_tokens_for_buy_sol(sol_amount)?;
         msg!("Token amount: {:?}", token_amount);
 
-        // Last buy because not enough tokens left
+        // Check if this purchase would exceed the token reserves
         if token_amount >= self.real_token_reserves {
-            // This is the real constraint - we can't sell more tokens than we have
+            // Last Buy - just buy all remaining tokens
             token_amount = self.real_token_reserves;
 
-            // temporarily store the current state
-            let current_virtual_token_reserves = self.virtual_token_reserves;
-            let current_virtual_sol_reserves = self.virtual_sol_reserves;
+            // Calculate SOL amount needed using the bonding curve formula
+            // This ensures pricing is consistent with the curve
+            sol_amount = self.get_sol_for_exact_tokens(token_amount)?;
 
-            // update self with new token amount
-            self.virtual_token_reserves = (current_virtual_token_reserves as u128)
-                .checked_sub(token_amount as u128)?
-                .try_into()
-                .ok()?;
-            self.virtual_sol_reserves = 115_005_359_056; // Total raise amount
-            let recomputed_sol_amount = self.get_sol_for_sell_tokens(token_amount)?;
-            msg!("ApplyBuy: recomputed_sol_amount: {}", recomputed_sol_amount);
+            // Mark the curve as complete
 
-            sol_amount = recomputed_sol_amount;
-
-            // Restore the state with the recomputed sol_amount
-            self.virtual_token_reserves = current_virtual_token_reserves;
-            self.virtual_sol_reserves = current_virtual_sol_reserves;
-
-            // Set complete to true because we've sold all tokens
             self.complete = true;
-            msg!("All tokens sold - bonding curve marked as complete");
+
+            msg!("ApplyBuy: Last buy - all tokens purchased. SOL amount: {}", sol_amount);
         }
 
         // Adjusting token reserve values
@@ -328,51 +313,92 @@ impl BondingCurve {
         let k = (self.virtual_sol_reserves as u128).checked_mul(
             self.virtual_token_reserves as u128
         )?;
+        msg!("GetTokensForBuySol: constant k: {}", k);
 
-        // Calculate new SOL reserves
+        // Calculate new virtual SOL reserves after adding input SOL
         let new_virtual_sol_reserves = (self.virtual_sol_reserves as u128).checked_add(
             sol_amount as u128
         )?;
+        msg!("GetTokensForBuySol: new_virtual_sol_reserves: {}", new_virtual_sol_reserves);
 
-        // Calculate new token reserves: k / new_sol_reserves
+        // Calculate new virtual token reserves: k / new_sol_reserves
         let new_virtual_token_reserves = k.checked_div(new_virtual_sol_reserves)?;
+        msg!("GetTokensForBuySol: new_virtual_token_reserves: {}", new_virtual_token_reserves);
 
         // Calculate tokens received
         let tokens_received = (self.virtual_token_reserves as u128).checked_sub(
             new_virtual_token_reserves
         )?;
-
-        msg!("GetTokensForBuySol: new_virtual_sol_reserves: {}", new_virtual_sol_reserves);
-        msg!("GetTokensForBuySol: new_virtual_token_reserves: {}", new_virtual_token_reserves);
         msg!("GetTokensForBuySol: tokens_received: {}", tokens_received);
 
-        <u128 as std::convert::TryInto<u64>>::try_into(tokens_received).ok()
+        // Safely convert to u64
+        let recv = tokens_received.try_into().ok()?;
+        msg!("GetTokensForBuySol: recv: {}", recv);
+        Some(recv)
     }
 
     pub fn get_sol_for_sell_tokens(&self, token_amount: u64) -> Option<u64> {
         if token_amount == 0 {
             return None;
         }
+        msg!("GetSolForSellTokens: token_amount: {}", token_amount);
+
+        // Calculate constant k = virtual_sol * virtual_token
+        let k = (self.virtual_sol_reserves as u128).checked_mul(
+            self.virtual_token_reserves as u128
+        )?;
+        msg!("GetSolForSellTokens: constant k: {}", k);
+
+        // Calculate new virtual token reserves after adding input tokens
+        let new_virtual_token_reserves = (self.virtual_token_reserves as u128).checked_add(
+            token_amount as u128
+        )?;
+        msg!("GetSolForSellTokens: new_virtual_token_reserves: {}", new_virtual_token_reserves);
+
+        // Calculate new virtual SOL reserves: k / new_token_reserves
+        let new_virtual_sol_reserves = k.checked_div(new_virtual_token_reserves)?;
+        msg!("GetSolForSellTokens: new_virtual_sol_reserves: {}", new_virtual_sol_reserves);
+
+        // Calculate SOL received
+        let sol_received = (self.virtual_sol_reserves as u128).checked_sub(
+            new_virtual_sol_reserves
+        )?;
+        msg!("GetSolForSellTokens: sol_received: {}", sol_received);
+
+        // Safely convert to u64
+        let recv = sol_received.try_into().ok()?;
+        msg!("GetSolForSellTokens: recv: {}", recv);
+        Some(recv)
+    }
+
+    // New helper function for the "last buy" scenario
+    pub fn get_sol_for_exact_tokens(&self, token_amount: u64) -> Option<u64> {
+        if token_amount == 0 {
+            return None;
+        }
+
+        // Use the same calculation as get_sol_for_sell_tokens but with a twist:
+        // Instead of adding tokens, we're removing them (the inverse operation of buying)
+        // This tells us how much SOL is needed to buy exactly these tokens
 
         // Calculate constant k = virtual_sol * virtual_token
         let k = (self.virtual_sol_reserves as u128).checked_mul(
             self.virtual_token_reserves as u128
         )?;
 
-        // Calculate new token reserves
-        let new_virtual_token_reserves = (self.virtual_token_reserves as u128).checked_add(
+        // Calculate new virtual token reserves after removing tokens
+        let new_virtual_token_reserves = (self.virtual_token_reserves as u128).checked_sub(
             token_amount as u128
         )?;
 
-        // Calculate new SOL reserves: k / new_token_reserves
+        // Calculate new virtual SOL reserves: k / new_token_reserves
         let new_virtual_sol_reserves = k.checked_div(new_virtual_token_reserves)?;
 
-        // Calculate SOL received
-        let sol_received = (self.virtual_sol_reserves as u128).checked_sub(
-            new_virtual_sol_reserves
-        )?;
+        // Calculate SOL needed (difference between new and current SOL reserves)
+        let sol_needed = new_virtual_sol_reserves.checked_sub(self.virtual_sol_reserves as u128)?;
 
-        <u128 as std::convert::TryInto<u64>>::try_into(sol_received).ok()
+        // Safely convert to u64
+        sol_needed.try_into().ok()
     }
 
     pub fn invariant(ctx: &mut BondingCurveLockerCtx) -> Result<()> {

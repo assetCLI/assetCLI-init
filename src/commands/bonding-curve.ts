@@ -530,4 +530,6 @@ export function registerBondingCurveCommands(program: Command) {
         console.error(chalk.red("Failed to retrieve tokens:"), error);
       }
     });
+
+    
 }

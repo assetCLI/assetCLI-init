@@ -223,10 +223,10 @@ export class BondingCurveService {
         true
       );
 
-      // IMPORTANT: Set start time to at least 1 minute in the future to avoid validation errors
+      // IMPORTANT: Set start time to at least 2 minute in the future to avoid validation errors
       // This gives enough time for transaction processing
       const currentTime =
-        (await getSolanaTimestamp(this.provider.connection)) + 60;
+        (await getSolanaTimestamp(this.provider.connection)) + 1200;
       const startTime = new BN(currentTime);
 
       // Construct parameters exactly as expected by the contract
@@ -255,27 +255,26 @@ export class BondingCurveService {
       const tx = await this.program.methods
         .createBondingCurve(bondingCurveParams)
         .accountsPartial({
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           mint: mintKey,
-          bondingCurve: bondingCurvePda,
           metadata: metadataAddress,
+          bondingCurve: bondingCurvePda,
           bondingCurveTokenAccount: bondingCurveTokenAccount,
           daoProposal: daoProposalPda,
           global: globalStateAddress,
           creator: this.provider.wallet.publicKey,
           systemProgram: web3.SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
-          tokenMetadataProgram: METADATA_PROGRAM_ID,
           rent: web3.SYSVAR_RENT_PUBKEY,
-          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenMetadataProgram: new PublicKey(METADATA_PROGRAM_ID),
         })
-        .signers([this.provider.wallet.payer!])
-        .rpc({ skipPreflight: true });
+        .rpc();
 
       return {
         success: true,
         data: {
           tx,
-          mintAddress: mintKey.toString(),
+          mintAddress: mintKey.toBase58(),
           uploadErrors,
         },
       };

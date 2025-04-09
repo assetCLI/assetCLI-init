@@ -166,15 +166,12 @@ describe("bonding-curve", async () => {
   });
 
   it("Create a bonding curve", async () => {
-    const currentTime = (await getSolanaTimestamp(provider.connection)) + 10;
-
     // Create the bonding curve parameters including DAO proposal data
     const params = {
       // Token metadata
       name: metadataOfToken.name,
       symbol: metadataOfToken.symbol,
       uri: metadataOfToken.uri,
-      startTime: new anchor.BN(currentTime), // Start in the future
       solRaiseTarget: solRaiseTarget,
 
       // DAO proposal metadata
@@ -538,9 +535,6 @@ describe("bonding-curve", async () => {
         name: metadataOfToken.name + "_small_target",
         symbol: metadataOfToken.symbol,
         uri: metadataOfToken.uri,
-        startTime: new anchor.BN(
-          (await getSolanaTimestamp(provider.connection)) + 10
-        ),
         solRaiseTarget: smallSolRaiseTarget,
 
         // DAO proposal params
@@ -739,9 +733,6 @@ describe("bonding-curve", async () => {
         name: metadataOfToken.name + "_full_token",
         symbol: metadataOfToken.symbol,
         uri: metadataOfToken.uri,
-        startTime: new anchor.BN(
-          (await getSolanaTimestamp(provider.connection)) + 10
-        ),
         solRaiseTarget: new anchor.BN(2000 * anchor.web3.LAMPORTS_PER_SOL),
         // DAO proposal params
         daoName: "Full Target DAO",

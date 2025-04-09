@@ -223,18 +223,11 @@ export class BondingCurveService {
         true
       );
 
-      // IMPORTANT: Set start time to at least 2 minute in the future to avoid validation errors
-      // This gives enough time for transaction processing
-      const currentTime =
-        (await getSolanaTimestamp(this.provider.connection)) + 1200;
-      const startTime = new BN(currentTime);
-
       // Construct parameters exactly as expected by the contract
       const bondingCurveParams = {
         name: params.name,
         symbol: params.symbol,
         uri: uri,
-        startTime: startTime,
         solRaiseTarget: params.solRaiseTarget,
         daoName: params.daoName || params.name,
         daoDescription:
@@ -537,7 +530,6 @@ export class BondingCurveService {
               discordLink: daoProposal.discordLink || undefined,
               websiteUrl: daoProposal.websiteUrl || undefined,
               bullishThesis: daoProposal.bullishThesis || undefined,
-              startTime: curve.account.startTime.toNumber() || undefined,
               logoUri: daoProposal.logoUri || undefined,
             },
           };

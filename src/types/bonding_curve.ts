@@ -964,12 +964,6 @@ export type BondingCurve = {
             "type": "string"
           },
           {
-            "name": "startTime",
-            "type": {
-              "option": "i64"
-            }
-          },
-          {
             "name": "solRaiseTarget",
             "type": "u64"
           },

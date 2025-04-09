@@ -43,7 +43,6 @@ pub struct Swap<'info> {
         mut,
         seeds=[BondingCurve::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
         constraint = bonding_curve.mint == *mint.to_account_info().key @ ContractError::NotBondingCurveMint,
-        constraint = bonding_curve.complete == false @ ContractError::BondingCurveComplete,
         bump = bonding_curve.bump
     )]
     pub bonding_curve: Box<Account<'info, BondingCurve>>,

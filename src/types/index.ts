@@ -71,7 +71,6 @@ export interface CreateBondingCurveParams {
   name: string;
   symbol: string;
   buff?: Buffer<ArrayBufferLike>;
-  startTime?: number | undefined; // Optional timestamp
   solRaiseTarget: BN;
   // DAO proposal data
   daoName: string;

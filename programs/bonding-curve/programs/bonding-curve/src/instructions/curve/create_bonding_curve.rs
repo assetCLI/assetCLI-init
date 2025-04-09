@@ -86,22 +86,12 @@ pub struct CreateBondingCurve<'info> {
 }
 
 impl<'info> CreateBondingCurve<'info> {
-    pub fn validate(&self, params: &CreateBondingCurveParams) -> Result<()> {
-        let clock = Clock::get()?;
-        if let Some(start_time) = params.start_time {
-            require!(start_time >= clock.unix_timestamp, ContractError::InvalidStartTime);
-        }
-        // add more validations here
-        Ok(())
-    }
 
     pub fn process(
         &mut self,
         params: CreateBondingCurveParams,
         bumps: &CreateBondingCurveBumps
     ) -> Result<()> {
-        // Validate the parameters
-        self.validate(&params)?;
         let clock = Clock::get()?;
 
         // Initialize the DAOProposal

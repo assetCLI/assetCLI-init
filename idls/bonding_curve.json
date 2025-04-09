@@ -958,12 +958,6 @@
             "type": "string"
           },
           {
-            "name": "start_time",
-            "type": {
-              "option": "i64"
-            }
-          },
-          {
             "name": "sol_raise_target",
             "type": "u64"
           },

@@ -84,7 +84,6 @@ export function registerBondingCurveTools(server: McpServer) {
       name: z.string(),
       symbol: z.string(),
       svg: z.string().optional(),
-      startTime: z.number().optional(),
       solRaiseTarget: z.number(),
       description: z.string().optional(),
       twitterHandle: z.string().optional(),
@@ -439,7 +438,6 @@ export function registerBondingCurveTools(server: McpServer) {
           realSolReserves: data.realSolReserves.toNumber(),
           virtualTokenReserves: data.virtualTokenReserves.toNumber(),
           virtualSolReserves: data.virtualSolReserves.toNumber(),
-          startTime: data.startTime.toNumber(),
           solRaiseTarget: data.solRaiseTarget.toNumber(),
           creator: data.creator.toBase58(),
         };

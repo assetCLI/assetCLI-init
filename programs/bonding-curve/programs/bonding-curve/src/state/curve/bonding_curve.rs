@@ -37,7 +37,6 @@ pub struct CreateBondingCurveParams {
     pub name: String,
     pub symbol: String,
     pub uri: String,
-    pub start_time: Option<i64>,
     pub sol_raise_target: u64,
     // DaoProposal Metadat
     pub dao_name: String,
@@ -135,11 +134,7 @@ impl BondingCurve {
         clock: &Clock,
         bump: u8
     ) -> &mut Self {
-        let start_time = if let Some(start_time) = params.start_time {
-            start_time
-        } else {
-            clock.unix_timestamp
-        };
+        let start_time = clock.unix_timestamp;
         let creator = creator;
         let complete = false;
 
@@ -152,7 +147,7 @@ impl BondingCurve {
                 creator,
                 // Use FULL token supply for virtual reserves to accurately represent price
                 virtual_token_reserves: global_config.token_total_supply, // 100M tokens
-                virtual_sol_reserves: global_config.initial_virtual_sol_reserves,
+                virtual_sol_reserves: params.sol_raise_target,
                 initial_virtual_token_reserves: global_config.token_total_supply,
                 real_sol_reserves: 0,
                 // Only 50% of tokens available for trading
@@ -175,7 +170,6 @@ impl BondingCurve {
             if potential_new_sol_reserves >= self.sol_raise_target {
                 msg!("SOL raise target of {} reached or exceeded.", self.sol_raise_target);
                 // Mark as complete (will trigger migration path later)
-                // But don't adjust the amount - let the user buy as much as they want
                 self.complete = true;
             }
         }

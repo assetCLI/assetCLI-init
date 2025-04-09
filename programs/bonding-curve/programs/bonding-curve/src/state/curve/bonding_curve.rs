@@ -139,7 +139,6 @@ impl BondingCurve {
         let complete = false;
 
         let sol_raise_target = params.sol_raise_target;
-
         // but only 50% is actually tradable
         self.clone_from(
             &(BondingCurve {

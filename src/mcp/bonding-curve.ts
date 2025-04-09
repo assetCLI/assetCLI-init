@@ -131,31 +131,27 @@ export function registerBondingCurveTools(server: McpServer) {
           IDL as Idl
         );
 
-        // Create a namespace realm
         const daoNamespace = `assetCLI-${options.name}-${options.symbol}`;
-        const realmCreationRes = await GovernanceService.initializeDAO(
+        const realmAddress = GovernanceService.getRealmPublicKeyFromName(
           connection,
-          keypair,
-          daoNamespace,
-          [keypair.publicKey],
-          1
+          daoNamespace
         );
-
-        if (!realmCreationRes.success || !realmCreationRes.data) {
+        // Check if the DAO already exists
+        const realmExists = await GovernanceService.getRealmInfo(
+          connection,
+          realmAddress
+        );
+        if (realmExists.success && realmExists.data) {
           return {
+            isError: true,
             content: [
               {
                 type: "text",
-                text: `Failed to create Realm namespace: ${realmCreationRes.error?.message}`,
+                text: `The realm already exists, try a different name/symbol : ${realmExists.data.realmAddress}`,
               },
             ],
           };
         }
-        const realmPubkey = realmCreationRes.data.realmAddress;
-        // Set start time to at least 2 minutes in the future
-        const startTime =
-          options.startTime || Math.floor(Date.now() / 1000) + 120;
-
         // Convert SOL to lamports for solRaiseTarget
         const solRaiseTarget = new BN(
           options.solRaiseTarget * LAMPORTS_PER_SOL
@@ -165,26 +161,54 @@ export function registerBondingCurveTools(server: McpServer) {
         const tx = await bondingCurveService.createBondingCurve({
           name: options.name,
           symbol: options.symbol,
-          startTime: startTime,
           solRaiseTarget: solRaiseTarget,
           daoName: options.name,
           buff: svgBuffer || Buffer.from(""),
           daoDescription:
             options.description ||
             `A realm created for ${options.name} using AssetCLI`,
-          realmAddress: realmPubkey,
+          realmAddress,
           twitterHandle: options.twitterHandle,
           bullishThesis: options.bullishThesis || "Bullish thesis",
         });
 
-        if (!tx.success || !tx.data) {
+        if (tx.success && tx.data) {
+          // Means the transaction was successful
+          // Create the realm namespace dao now
+          const realmCreationRes =
+            await GovernanceService.initializeNamespaceDao(
+              connection,
+              keypair,
+              daoNamespace,
+              bondingCurveService.findMintAddress(
+                options.name,
+                keypair.publicKey
+              ),
+              [keypair.publicKey]
+            );
+          if (!realmCreationRes.success || !realmCreationRes.data)
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Failed to create DAO: ${realmCreationRes.error}`,
+                },
+              ],
+            };
+
           return {
             content: [
               {
                 type: "text",
-                text: `Failed to create bonding curve: ${
-                  tx.error?.message || tx.error
-                }`,
+                text:
+                  "Token created successfully on bonding curve!\n\n" +
+                  `Transaction signature: ${tx.data.tx}\n` +
+                  `Mint address: ${tx.data.mintAddress}\n` +
+                  `Realm Address: ${realmCreationRes.data.realmAddress}\n\n` +
+                  "What's next?\n" +
+                  "1. Share the mint address with others who want to participate\n" +
+                  "2. Use 'swapTokens' to buy or sell tokens\n" +
+                  "3. Use 'getBondingCurveInfo' to check the current curve status",
               },
             ],
           };
@@ -194,14 +218,7 @@ export function registerBondingCurveTools(server: McpServer) {
           content: [
             {
               type: "text",
-              text:
-                "Token created successfully on bonding curve!\n\n" +
-                `Transaction signature: ${tx.data.tx}\n` +
-                `Mint address: ${tx.data.mintAddress}\n\n` +
-                "What's next?\n" +
-                "1. Share the mint address with others who want to participate\n" +
-                "2. Use 'swapTokens' to buy or sell tokens\n" +
-                "3. Use 'getBondingCurveInfo' to check the current curve status",
+              text: `Failed to create bonding curve token: ${tx.error?.message}`,
             },
           ],
         };

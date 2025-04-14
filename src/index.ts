@@ -6,6 +6,7 @@ import { registerConfigCommands } from "./commands/config";
 import { registerDaoCommands } from "./commands/dao";
 import { registerProposalCommands } from "./commands/proposal";
 import { sendFirstUseGATelemetry } from "./utils/googleAnalytics";
+import { registerBondingCurveCommands } from "./commands/bonding-curve";
 
 async function main() {
   const program = new Command();
@@ -21,6 +22,7 @@ async function main() {
   registerConfigCommands(program);
   registerDaoCommands(program);
   registerProposalCommands(program);
+  registerBondingCurveCommands(program);
   // Add a default help command
   program
     .command("help")

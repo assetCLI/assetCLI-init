@@ -33,11 +33,6 @@ jobs:
           solana --version
           solana config get
 
-      - name: Install CLI dependencies
-        run: |
-          npm install
-          npm run build
-
       - name: Setup Solana Localnet
         run: |
           # Create default keypair first
@@ -45,7 +40,7 @@ jobs:
           solana-keygen new --no-bip39-passphrase -o /home/runner/.config/solana/id.json
 
           # Start a localnet with explicit bind address for IPv4
-          solana-test-validator --quiet --reset --clone-upgradeable-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf --clone BSTq9w3kZwNwpBXJEvTZz2G9ZTNyKBvoSeXMvwb4cNZr --url devnet --bind-address 127.0.0.1 --rpc-port 8899 &
+          solana-test-validator --quiet --reset --clone-upgradeable-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s --clone BSTq9w3kZwNwpBXJEvTZz2G9ZTNyKBvoSeXMvwb4cNZr --url devnet --bind-address 127.0.0.1 --rpc-port 8899 &
           VALIDATOR_PID=$!
 
           # Give the localnet time to boot up
@@ -70,6 +65,31 @@ jobs:
           # Airdrop to default wallet
           solana airdrop 100
           solana balance
+
+      - name: Build and Deploy Bonding-Curve program
+        run: |
+          # Change to the program directory
+          cd ./programs/bonding-curve
+          # Build the program
+          anchor build
+
+          # Deploy the program
+          anchor deploy --provider.cluster localnet
+
+          # Sync the program
+          anchor keys sync --provider.cluster localnet
+
+      - name: Install CLI dependencies
+        run: |
+
+          # Copy IDL and types to the CLI
+          mkdir -p idls
+          cp "$PWD/programs/bonding-curve/target/idl/bonding_curve.json" idls/
+          cp "$PWD/programs/bonding-curve/target/types/bonding_curve.ts" src/types/
+
+          # Install and build the CLI
+          npm install
+          npm run build
 
       - name: Run tests
         run: |

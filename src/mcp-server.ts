@@ -8,9 +8,9 @@ import { ConnectionService } from "./services/connection-service";
 import { registerResource } from "./mcp/resource";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 
-import { registerAgentTools } from "./mcp/agent-tools";
 import { registerTestTokenTools } from "./mcp/test-token";
 import { registerMultisigTools } from "./mcp/multisig";
+import { registerBondingCurveTools } from "./mcp/bonding-curve";
 
 const server = new McpServer({
   name: "AssetCLI",
@@ -21,9 +21,9 @@ registerConfigAndWalletTools(server);
 registerDaoTools(server);
 registerProposalTools(server);
 registerResource(server);
-// registerAgentTools(server);
 registerMultisigTools(server);
-registerTestTokenTools(server);
+// registerTestTokenTools(server);
+registerBondingCurveTools(server);
 // Get Balance
 server.tool(
   "getBalance",

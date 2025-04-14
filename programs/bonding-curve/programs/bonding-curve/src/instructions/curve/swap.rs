@@ -7,13 +7,12 @@ use anchor_spl::{
 use crate::{
     errors::ContractError,
     BondingCurve,
-    BondingCurveLockerCtx,
     BuyResult,
+    DAOProposal,
     Global,
-    IntoBondingCurveLockerCtx,
     SellResult,
-    TokensPurchased, // Event
-    TokensSold, // Event
+    TokensPurchased,
+    TokensSold,
 };
 
 #[derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)]
@@ -44,7 +43,6 @@ pub struct Swap<'info> {
         mut,
         seeds=[BondingCurve::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
         constraint = bonding_curve.mint == *mint.to_account_info().key @ ContractError::NotBondingCurveMint,
-        constraint = bonding_curve.complete == false @ ContractError::BondingCurveComplete,
         bump = bonding_curve.bump
     )]
     pub bonding_curve: Box<Account<'info, BondingCurve>>,
@@ -65,26 +63,17 @@ pub struct Swap<'info> {
     )]
     pub user_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
+    // Add DAO proposal access when needed
+    #[account(
+        seeds = [DAOProposal::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
+        bump
+    )]
+    pub dao_proposal: Box<Account<'info, DAOProposal>>,
+
     pub system_program: Program<'info, System>,
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub clock: Sysvar<'info, Clock>,
-}
-
-impl<'info> IntoBondingCurveLockerCtx<'info> for Swap<'info> {
-    fn into_bonding_curve_locker_ctx(
-        &self,
-        bonding_curve_bump: u8
-    ) -> BondingCurveLockerCtx<'info> {
-        BondingCurveLockerCtx {
-            bonding_curve_bump,
-            mint: self.mint.clone(),
-            global: self.global.clone(),
-            bonding_curve: self.bonding_curve.clone(),
-            bonding_curve_token_account: self.bonding_curve_token_account.clone(),
-            token_program: self.token_program.clone(),
-        }
-    }
 }
 
 impl<'info> Swap<'info> {
@@ -99,10 +88,8 @@ impl<'info> Swap<'info> {
         );
         if !*base_in && self.bonding_curve.sol_raise_target > 0 {
             if self.bonding_curve.sol_raise_target >= self.bonding_curve.sol_raise_target {
-                // will decide what's the best way to handle this
                 msg!("Target SOL reached. Maybe migrate now!?");
             }
-
             if self.bonding_curve.real_sol_reserves + *amount > self.bonding_curve.sol_raise_target {
                 msg!("Target SOL will be reached congrats!");
             }
@@ -119,9 +106,6 @@ impl<'info> Swap<'info> {
         );
 
         let bonding_curve = self.bonding_curve.clone();
-        let locker = self.into_bonding_curve_locker_ctx(self.bonding_curve.bump);
-        locker.unlock_ata()?;
-
         let sol_amount: u64;
         let token_amount: u64;
         let fee_lamports: u64;
@@ -185,8 +169,6 @@ impl<'info> Swap<'info> {
             });
         }
 
-        // Optimize invariant check for production
-        BondingCurve::invariant(&mut self.into_bonding_curve_locker_ctx(self.bonding_curve.bump))?;
         msg!("{:#?}", bonding_curve);
 
         Ok(())
@@ -222,8 +204,6 @@ impl<'info> Swap<'info> {
             buy_result.token_amount,
             self.mint.decimals
         )?;
-        let locker = &mut self.into_bonding_curve_locker_ctx(self.bonding_curve.bump);
-        locker.lock_ata()?;
         msg!("Token transfer complete");
 
         // Transfer entire SOL amount to bonding curve (no split during active phase)
@@ -282,8 +262,6 @@ impl<'info> Swap<'info> {
             sell_result.token_amount,
             self.mint.decimals
         )?;
-        let locker = &mut self.into_bonding_curve_locker_ctx(self.bonding_curve.bump);
-        locker.lock_ata()?;
         msg!("Token transfer complete");
 
         // Transfer SOL to user

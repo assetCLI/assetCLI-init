@@ -16,6 +16,7 @@ running your entire governance, multisig and funding lifecycle (including bondin
 
 - **DAO Creation**: Create standard DAOs or integrated DAOs with Squads multisig support
 - **Treasury Management**: Fund and manage both DAO treasury and multisig vaults
+- **Bonding Curves**: Launch tokens with bonding curve economics and automatic DAO creation
 - **Proposal Creation**: Create SOL or token transfer proposals
 - **Voting System**: Vote to approve or deny proposals
 - **Execution**: Execute approved proposals
@@ -144,6 +145,36 @@ assetCLI proposal vote --proposal <PROPOSAL_ADDRESS> --deny
 
 # Execute an approved proposal
 assetCLI proposal execute --proposal <PROPOSAL_ADDRESS>
+```
+
+### 🪙 Bonding Curve Commands
+
+The CLI includes a powerful bonding curve module for token launches with auto-DAO creation:
+
+```bash
+# Initialize the bonding curve protocol (done once)
+assetCLI bonding-curve init
+
+# Get global bonding curve settings
+assetCLI bonding-curve get-global-settings
+
+# Launch a new token with an associated DAO
+assetCLI bonding-curve launch-token \
+  --name "MyToken" \
+  --symbol "MTK" \
+  --file "path/to/logo.png" \
+  --sol-raise-target 100 \
+  --description "My awesome token project" \
+  --x-account "myTwitterHandle"
+
+# Buy or sell tokens using the bonding curve
+assetCLI bonding-curve swap \
+  --mint <TOKEN_MINT_ADDRESS> \
+  --direction buy \
+  --amount 1.5
+
+# List all tokens available on the bonding curve
+assetCLI bonding-curve get-all-tokens
 ```
 
 ### 🧪 Testing the CLI
@@ -319,6 +350,18 @@ Vote against the proposal xyz789...
 Execute the approved proposal abc123...
 ```
 
+#### Bonding Curve Operations
+
+```
+Get global bonding curve settings
+Launch a new token called "Community Token" with symbol "CMT" on the bonding curve
+Get information about the bonding curve for mint address xyz789...
+Buy 2 SOL worth of tokens from the bonding curve at mint address xyz789...
+Sell 100 tokens back to the bonding curve
+Show me all tokens available on bonding curves
+Get my token holdings
+```
+
 #### Utility Operations
 
 ```
@@ -336,6 +379,7 @@ GET assetCLI://docs/readme
 GET assetCLI://docs/dao-guide
 GET assetCLI://docs/proposal-guide
 GET assetCLI://docs/wallet-guide
+GET assetCLI://docs/bonding-curve-guide
 ```
 
 ### Demo
@@ -346,6 +390,7 @@ GET assetCLI://docs/wallet-guide
     <a href="https://x.com/dorkydhruv/status/1901066331400925538">
     <img src="./docs/images/embed.png" alt="assetCLI Demo Video" width="600"/>
   </a>
+  <p>Follow us on <a href="https://www.youtube.com/@assetCLI" target="_blank">YouTube</a> for more demos and tutorials</p>
 </div>
 
 ---
@@ -354,18 +399,23 @@ GET assetCLI://docs/wallet-guide
 
 ```
 assetCLI-init/
+├── programs/
+│   └── bonding-curve/        # Solana program for bonding curves
 ├── src/
-│   ├── commands/         # CLI command implementations
-│   ├── mcp/              # MCP tools and resources
-│   ├── services/         # Core business logic
-│   ├── utils/            # Utility functions
-│   ├── types/            # TypeScript type definitions
-│   ├── debug/            # Debug scripts for testing
-│   ├── mcp-server.ts     # MCP server implementation
-│   └── index.ts          # Entry point
-├── tests/                # Test files
-├── dist/                 # Compiled output
-└── docs/                 # Documentation
+│   ├── commands/             # CLI command implementations
+│   ├── mcp/                  # MCP tools and resources
+│   ├── services/             # Core business logic
+│   │   ├── bonding-curve-service.ts  # Bonding curve implementation
+│   │   ├── governance-service.ts     # DAO management
+│   │   └── multisig-service.ts       # Multisig implementation
+│   ├── utils/                # Utility functions
+│   ├── types/                # TypeScript type definitions
+│   ├── debug/                # Debug scripts for testing
+│   ├── mcp-server.ts         # MCP server implementation
+│   └── index.ts              # Entry point
+├── tests/                    # Test files
+├── dist/                     # Compiled output
+└── docs/                     # Documentation
 ```
 
 ## 🧩 Architecture
@@ -374,9 +424,12 @@ The application integrates multiple key components:
 
 1. **SPL Governance**: For DAO creation, proposal management, and voting
 2. **Squads Multisig**: For multi-signature transaction approval
-3. **[Model Context Protocol (MCP)](https://www.claudemcp.com/)**: For AI-assisted interactions and operations
+3. **Bonding Curve**: For token launches with automatic liquidity and price discovery
+4. **[Model Context Protocol (MCP)](https://www.claudemcp.com/)**: For AI-assisted interactions and operations
 
 For integrated DAOs, the tool creates a governance structure where proposals can control a multisig vault, enabling more complex treasury management with the security of multisig approvals.
+
+The bonding curve system allows for launching tokens with built-in liquidity mechanisms and automatic DAO creation for community governance.
 
 The MCP integration provides:
 
@@ -411,6 +464,8 @@ pnpm build
 - **Proposal execution failures**: Make sure the proposal has been approved
 - **MCP connection issues**: Verify the MCP server is running and accessible
 - **Natural language parsing errors**: Try using more specific language or make your request more explicit
+- **Bonding curve errors**: Check that you've initialized the bonding curve protocol
+- **Invalid start time errors**: The bonding curve requires a start time in the future
 
 ## 📊 Telemetry
 
@@ -438,8 +493,8 @@ This tool collects anonymous telemetry data to help improve future development. 
 You can disable telemetry completely by using the `--noga` flag:
 
 ```bash
-# Disable telemetry permanentaly
-daocli --noga <command>
+# Disable telemetry permanently
+assetCLI --noga <command>
 ```
 
 Once you use the `--noga` flag, your preference will be saved and no telemetry will ever be sent, even on future runs.

@@ -188,6 +188,118 @@ export class GovernanceService {
     }
   }
 
+  static getRealmPublicKeyFromName(
+    connection: Connection,
+    name: string
+  ): PublicKey {
+    return new SplGovernance(
+      connection,
+      this.programId
+    ).pda.realmAccount({ name }).publicKey;
+  }
+
+  /*
+   * Intialize a namespace dao
+   */
+  static async initializeNamespaceDao(
+    connection: Connection,
+    keypair: Keypair,
+    name: string,
+    communityMint: PublicKey,
+    members: PublicKey[],
+    councilMint?: PublicKey // Some orgs may already have a council mint
+  ): Promise<
+    ServiceResponse<{
+      realmAddress: PublicKey;
+      transactionSignature: string;
+    }>
+  > {
+    try {
+      if (!councilMint)
+        councilMint = await createMint(
+          connection,
+          keypair,
+          keypair.publicKey,
+          null,
+          0
+        );
+
+      const splGovernance = new SplGovernance(connection, this.programId);
+      const instructions: TransactionInstruction[] = [];
+      const realmId = splGovernance.pda.realmAccount({ name }).publicKey;
+      const createRealmIx = await splGovernance.createRealmInstruction(
+        name,
+        communityMint,
+        // := NO community holder can greate a governance
+        DISABLED_VOTER_WEIGHT,
+        keypair.publicKey,
+        undefined,
+        councilMint,
+        "liquid", // Tradable tokens for community
+        "membership"
+      );
+      instructions.push(createRealmIx);
+      // Initial members of the project/orgs
+      for (const member of members) {
+        // Create token owner record
+        const createTokenOwnerRecordIx =
+          await splGovernance.createTokenOwnerRecordInstruction(
+            realmId,
+            member,
+            councilMint,
+            keypair.publicKey
+          );
+
+        // Deposit governance tokens
+        const depositGovTokenIx =
+          await splGovernance.depositGoverningTokensInstruction(
+            realmId,
+            councilMint,
+            councilMint,
+            member,
+            keypair.publicKey,
+            keypair.publicKey,
+            1
+          );
+        // Adjust signer flags
+        if (!member.equals(keypair.publicKey)) {
+          depositGovTokenIx.keys.forEach((key) => {
+            if (key.pubkey.equals(member) && key.isSigner) {
+              key.isSigner = false;
+            }
+          });
+        }
+        instructions.push(createTokenOwnerRecordIx, depositGovTokenIx);
+      }
+
+      // Process instructions
+      const txRes = await sendTx(connection, keypair, instructions);
+      if (!txRes.success || !txRes.data)
+        return {
+          success: false,
+          error: {
+            message: "Failed to initialize DAO",
+            details: txRes.error,
+          },
+        };
+
+      return {
+        success: true,
+        data: {
+          realmAddress: realmId,
+          transactionSignature: txRes.data,
+        },
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: {
+          message: "Failed to initialize namespace DAO",
+          details: err,
+        },
+      };
+    }
+  }
   /**
    * Initialize a DAO with governance and token setup
    */
@@ -251,7 +363,6 @@ export class GovernanceService {
       );
 
       instructions.push(createRealmIx);
-
 
       // 2. Process members
       for (const member of members) {

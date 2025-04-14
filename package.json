@@ -14,6 +14,11 @@
     "test:standard": "mocha -r ts-node/register tests/standard-dao-test.ts"
   },
   "dependencies": {
+    "@coral-xyz/anchor": "^0.31.0",
+    "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
+    "@metaplex-foundation/umi": "^1.1.1",
+    "@metaplex-foundation/umi-bundle-defaults": "^1.1.1",
+    "@metaplex-foundation/umi-uploader-irys": "^1.1.1",
     "@modelcontextprotocol/sdk": "^1.6.1",
     "@solana/spl-token": "^0.4.9",
     "@solana/web3.js": "^1.98.0",

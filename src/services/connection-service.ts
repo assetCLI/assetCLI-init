@@ -1,4 +1,4 @@
-import { Connection, Commitment } from "@solana/web3.js";
+import { Connection, Commitment, Cluster } from "@solana/web3.js";
 import { ConfigService } from "./config-service";
 import {
   ENDPOINT_MAP,
@@ -67,6 +67,33 @@ export class ConnectionService {
           message: "Failed to create connection from config, using default",
           details: error,
         },
+      };
+    }
+  }
+
+  static async getCluster(): Promise<ServiceResponse<string>> {
+    try {
+      const configResponse = await ConfigService.getConfig();
+      if (!configResponse.success || !configResponse.data?.dao?.endpoint) {
+        return {
+          success: true,
+          data: DEFAULT_CLUSTER,
+          error: { message: "Endpoint not found, default cluster used" },
+        };
+      }
+      const endpoint = configResponse.data.dao.endpoint;
+      let clusterName = DEFAULT_CLUSTER;
+      for (const [cluster, url] of Object.entries(ENDPOINT_MAP)) {
+        if (url === endpoint) {
+          clusterName = cluster as Cluster;
+          break;
+        }
+      }
+      return { success: true, data: clusterName };
+    } catch (error) {
+      return {
+        success: false,
+        error: { message: "Failed to retrieve cluster information", details: error },
       };
     }
   }

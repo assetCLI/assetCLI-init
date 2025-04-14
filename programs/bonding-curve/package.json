@@ -11,6 +11,7 @@
     "@metaplex-foundation/umi": "^1.1.1",
     "@metaplex-foundation/umi-bundle-defaults": "^1.1.1",
     "@metaplex-foundation/umi-storage-mock": "^1.1.1",
+    "@metaplex-foundation/umi-uploader-irys": "^1.1.1",
     "@solana/spl-token": "^0.4.13"
   },
   "devDependencies": {

@@ -27,3 +27,4 @@ export const ENDPOINT_LOCALHOST = "http://localhost:8899";
 export const SPL_GOVERNANCE_PROGRAM_ID =
   "GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw";
 export const SQDS_PROGRAM_ID = "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf";
+export const METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";

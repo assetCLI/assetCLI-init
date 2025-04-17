@@ -49,9 +49,16 @@ pub struct Swap<'info> {
 
     #[account(
         mut,
+        seeds = [BondingCurve::VAULT_PREFIX.as_bytes(), mint.to_account_info().key().as_ref()],
+        bump=bonding_curve.vault_bump,
+    )]
+    pub bonding_curve_vault: SystemAccount<'info>,
+
+    #[account(
+        mut,
         associated_token::mint = mint,
-        associated_token::authority= bonding_curve,
-        constraint = bonding_curve.mint == *mint.to_account_info().key @ ContractError::NotBondingCurveMint,
+        associated_token::authority= bonding_curve_vault,
+        constraint = bonding_curve.mint == mint.key() @ ContractError::NotBondingCurveMint,
     )]
     pub bonding_curve_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -88,23 +95,14 @@ impl<'info> Swap<'info> {
         );
         if !*base_in && self.bonding_curve.sol_raise_target > 0 {
             if self.bonding_curve.sol_raise_target >= self.bonding_curve.sol_raise_target {
-                msg!("Target SOL reached. Maybe migrate now!?");
             }
             if self.bonding_curve.real_sol_reserves + *amount > self.bonding_curve.sol_raise_target {
-                msg!("Target SOL will be reached congrats!");
             }
         }
         Ok(())
     }
     pub fn process(&mut self, params: SwapParams) -> Result<()> {
         let SwapParams { base_in, amount, min_out_amount } = params;
-        msg!(
-            "Swap started. BaseIn: {}, AmountIn: {}, MinOutAmount: {}",
-            base_in,
-            amount,
-            min_out_amount
-        );
-
         let bonding_curve = self.bonding_curve.clone();
         let sol_amount: u64;
         let token_amount: u64;
@@ -119,24 +117,16 @@ impl<'info> Swap<'info> {
             );
 
             // Add check to verify bonding curve has enough SOL
-            let bonding_curve_sol = self.bonding_curve.real_sol_reserves;
-            msg!("Bonding curve SOL reserves: {}", bonding_curve_sol);
-
             let sell_result = match self.bonding_curve.apply_sell(amount) {
                 Some(result) => result,
                 None => {
-                    msg!("Sell failed - likely insufficient SOL in bonding curve");
                     return Err(ContractError::SellFailed.into());
                 }
             };
-
-            msg!("SellResult: {:#?}", sell_result);
-
             sol_amount = sell_result.sol_amount;
             token_amount = sell_result.token_amount;
 
             fee_lamports = bonding_curve.calculate_fee(sol_amount, clock.unix_timestamp)?;
-            msg!("Fee: {} SOL", fee_lamports);
             self.complete_sell(sell_result.clone(), min_out_amount, fee_lamports)?;
 
             // Emit event with the actual price
@@ -168,9 +158,6 @@ impl<'info> Swap<'info> {
                 timestamp: clock.unix_timestamp,
             });
         }
-
-        msg!("{:#?}", bonding_curve);
-
         Ok(())
     }
 
@@ -189,11 +176,11 @@ impl<'info> Swap<'info> {
         // Transfer tokens to user
         let cpi_accounts = TransferChecked {
             from: self.bonding_curve_token_account.to_account_info(),
-            authority: self.bonding_curve.to_account_info(),
+            authority: self.bonding_curve_vault.to_account_info(),
             to: self.user_token_account.to_account_info(),
             mint: self.mint.to_account_info(),
         };
-        let signer = BondingCurve::get_signer(&self.bonding_curve.bump, &self.bonding_curve.mint);
+        let signer = self.bonding_curve.get_vault_seeds();
         let signer_seeds = &[&signer[..]];
         transfer_checked(
             CpiContext::new_with_signer(
@@ -204,41 +191,22 @@ impl<'info> Swap<'info> {
             buy_result.token_amount,
             self.mint.decimals
         )?;
-        msg!("Token transfer complete");
-
         // Transfer entire SOL amount to bonding curve (no split during active phase)
         let transfer_instruction = system_instruction::transfer(
             self.user.key,
-            &self.bonding_curve.key(),
+            &self.bonding_curve_vault.key(),
             buy_result.sol_amount
         );
         solana_program::program::invoke_signed(
             &transfer_instruction,
             &[
                 self.user.to_account_info(),
-                self.bonding_curve.to_account_info(),
+                self.bonding_curve_vault.to_account_info(),
                 self.system_program.to_account_info(),
             ],
             &[]
         )?;
-        msg!("SOL transfer complete");
-
-        // Transfer fee to fee receiver
-        let fee_transfer_ix = system_instruction::transfer(
-            self.user.key,
-            &self.fee_receiver.key(),
-            fee_lamports
-        );
-        solana_program::program::invoke_signed(
-            &fee_transfer_ix,
-            &[
-                self.user.to_account_info(),
-                self.fee_receiver.clone(),
-                self.system_program.to_account_info(),
-            ],
-            &[]
-        )?;
-        msg!("Fee transfer complete");
+        self.transfer_fee(fee_lamports)?;
         Ok(())
     }
 
@@ -249,8 +217,9 @@ impl<'info> Swap<'info> {
         fee_lamports: u64
     ) -> Result<()> {
         // Sell tokens
-        let sell_amount_minus_fee = sell_result.sol_amount - fee_lamports;
-        require!(sell_amount_minus_fee >= min_out_amount, ContractError::SlippageExceeded);
+        require!(sell_result.sol_amount >= min_out_amount, ContractError::SlippageExceeded);
+        msg!("Transferring {} SOL to user for selling", sell_result.sol_amount);
+        msg!("SOL balance of bonding curve vault: {}", self.bonding_curve_vault.lamports());
         let cpi_accounts = TransferChecked {
             from: self.user_token_account.to_account_info(),
             authority: self.user.to_account_info(),
@@ -262,16 +231,41 @@ impl<'info> Swap<'info> {
             sell_result.token_amount,
             self.mint.decimals
         )?;
-        msg!("Token transfer complete");
-
         // Transfer SOL to user
-        self.bonding_curve.sub_lamports(sell_amount_minus_fee).unwrap();
-        self.user.add_lamports(sell_amount_minus_fee).unwrap();
-        msg!("SOL transfer complete");
+        let transfer_instruction = system_instruction::transfer(
+            self.bonding_curve_vault.key,
+            self.user.key,
+            sell_result.sol_amount
+        );
+        solana_program::program::invoke_signed(
+            &transfer_instruction,
+            &[
+                self.bonding_curve_vault.to_account_info(),
+                self.user.to_account_info(),
+                self.system_program.to_account_info(),
+            ],
+            &[&self.bonding_curve.get_vault_seeds()[..]]
+        )?;
+        self.transfer_fee(fee_lamports)?;
+        Ok(())
+    }
 
-        self.bonding_curve.sub_lamports(fee_lamports).unwrap();
-        self.fee_receiver.add_lamports(fee_lamports).unwrap();
-        msg!("Fee transfer complete");
+    fn transfer_fee(&self, fee_lamports: u64) -> Result<()> {
+        // Transfer fee to fee receiver
+        let fee_transfer_ix = system_instruction::transfer(
+            self.user.key,
+            self.fee_receiver.key,
+            fee_lamports
+        );
+        solana_program::program::invoke_signed(
+            &fee_transfer_ix,
+            &[
+                self.user.to_account_info(),
+                self.fee_receiver.to_account_info(),
+                self.system_program.to_account_info(),
+            ],
+            &[]
+        )?;
         Ok(())
     }
 }

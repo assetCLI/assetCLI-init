@@ -10,28 +10,30 @@ pub struct DAOProposal {
     // Basic DAO metadata
     #[max_len(50)]
     pub name: String,
-    #[max_len(200)]
+    #[max_len(256)]
     pub description: String,
-    pub realm_address: Pubkey, // Treasury where funds are sent after fundraising
+    pub realm_address: Pubkey,
+    pub treasury_address: Pubkey, // Treasury where funds are sent after fundraising
+    pub governance_address: Pubkey, // Governance address for the DAO
 
     // Optional social/community links
-    #[max_len(50)]
+    #[max_len(32)]
     pub twitter_handle: Option<String>,
-    #[max_len(100)]
+    #[max_len(64)]
     pub discord_link: Option<String>,
-    #[max_len(100)]
+    #[max_len(64)]
     pub website_url: Option<String>,
-    #[max_len(200)]
+    #[max_len(256)]
     pub logo_uri: Option<String>,
 
     // Team information
-    #[max_len(50)]
+    #[max_len(32)]
     pub founder_name: Option<String>,
-    #[max_len(50)]
+    #[max_len(32)]
     pub founder_twitter: Option<String>,
 
     // Investment thesis
-    #[max_len(500)]
+    #[max_len(256)]
     pub bullish_thesis: Option<String>,
 
     // Governance parameters
@@ -39,10 +41,4 @@ pub struct DAOProposal {
 }
 impl DAOProposal {
     pub const SEED_PREFIX: &'static str = "dao_proposal";
-    pub fn get_signer_seeds(&self) -> [&[u8];3] {
-        let prefix_bytes = Self::SEED_PREFIX.as_bytes();
-        let mint_bytes = self.mint.as_ref();
-        let bump_slice = std::slice::from_ref(&self.bump);
-        [prefix_bytes, mint_bytes, bump_slice]
-    }
 }

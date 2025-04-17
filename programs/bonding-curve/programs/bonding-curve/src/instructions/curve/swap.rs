@@ -218,8 +218,6 @@ impl<'info> Swap<'info> {
     ) -> Result<()> {
         // Sell tokens
         require!(sell_result.sol_amount >= min_out_amount, ContractError::SlippageExceeded);
-        msg!("Transferring {} SOL to user for selling", sell_result.sol_amount);
-        msg!("SOL balance of bonding curve vault: {}", self.bonding_curve_vault.lamports());
         let cpi_accounts = TransferChecked {
             from: self.user_token_account.to_account_info(),
             authority: self.user.to_account_info(),

@@ -23,7 +23,7 @@ pub struct CreateRaydiumPool<'info> {
     pub global: Box<Account<'info, Global>>,
     #[account(mut)]
     /// CHECK: fee receiver asserted in validation function
-    pub fee_receiver: AccountInfo<'info>,
+    pub fee_receiver: UncheckedAccount<'info>,
     #[account(mut)]
     pub token_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(
@@ -111,7 +111,7 @@ pub struct CreateRaydiumPool<'info> {
     pub lp_mint: UncheckedAccount<'info>,
     /// CHECK: creator lp ATA token account, init by cp-swap
     #[account(mut)]
-    pub creator_lp_token: UncheckedAccount<'info>,
+    pub bonding_curve_lp_token: UncheckedAccount<'info>,
     /// CHECK: Token_0 vault for the pool, init by cp-swap
     #[account(
         mut,
@@ -161,7 +161,6 @@ pub struct CreateRaydiumPool<'info> {
 
 impl<'info> CreateRaydiumPool<'info> {
     pub fn revoke_mint_authority(&self) -> Result<()> {
-        msg!("Revoke mint Authority");
         let accounts = SetAuthority {
             account_or_mint: self.token_mint.to_account_info(),
             current_authority: self.bonding_curve.to_account_info(),
@@ -174,12 +173,10 @@ impl<'info> CreateRaydiumPool<'info> {
             signer
         );
         set_authority(cpi_context, AuthorityType::MintTokens, None)?;
-        msg!("Revoke mint authority::done");
         Ok(())
     }
 
     pub fn wrap_sol_for_cpmm(&mut self, amount_to_wrap: u64) -> Result<()> {
-        msg!("Wrapping SOL");
         // Transfer SOL from the bonding curve to the WSOL account
         let transfer_ix = system_instruction::transfer(
             &self.bonding_curve_vault.to_account_info().key,
@@ -197,9 +194,6 @@ impl<'info> CreateRaydiumPool<'info> {
             ],
             &[&self.bonding_curve.get_vault_seeds()[..]]
         )?;
-
-        msg!("Syncing native balance");
-
         // Create syncNative instruction to sync the native balance
         let sync_native_ix = spl_token::instruction::sync_native(
             &self.token_program.key,
@@ -214,35 +208,6 @@ impl<'info> CreateRaydiumPool<'info> {
                 self.token_program.to_account_info(),
             ]
         )?;
-
-        msg!("Wrapped {} SOL to WSOL", amount_to_wrap);
-        Ok(())
-    }
-    pub fn debug_log_state(&self) -> Result<()> {
-        msg!("--- Debug Log: CreateRaydiumPool State ---");
-        msg!("Creator: {}", self.creator.key());
-        msg!("Global: {}", self.global.key());
-        msg!("Fee Receiver: {}", self.fee_receiver.key);
-        msg!("Token Mint: {}", self.token_mint.key());
-        msg!("Base Mint: {}", self.base_mint.key());
-        msg!("Bonding Curve: {}", self.bonding_curve.key());
-        msg!("  complete: {}", self.bonding_curve.complete);
-        msg!("  real_sol_reserves: {}", self.bonding_curve.real_sol_reserves);
-        msg!("  token_total_supply: {}", self.bonding_curve.token_total_supply);
-        msg!("DAO Proposal: {}", self.dao_proposal.key());
-        msg!("DAO Vault: {}", self.dao_vault.key());
-        msg!("DAO Governance: {}", self.dao_governance.key());
-        msg!("DAO Token Account: {}", self.dao_token_account.key());
-        msg!("CP-Swap Program: {}", self.cp_swap_program.key());
-        msg!("Amm Config: {}", self.amm_config.key());
-        msg!("Authority: {}", self.authority.key());
-        msg!("Pool State: {}", self.pool_state.key());
-        msg!("LP Mint: {}", self.lp_mint.key());
-        msg!("Creator LP Token: {}", self.creator_lp_token.key());
-        msg!("Token 0 Vault: {}", self.token_0_vault.key());
-        msg!("Token 1 Vault: {}", self.token_1_vault.key());
-        msg!("Create Pool Fee: {}", self.create_pool_fee.key());
-        msg!("Observation State: {}", self.observation_state.key());
         Ok(())
     }
 
@@ -267,6 +232,13 @@ impl<'info> CreateRaydiumPool<'info> {
             token_amount,
             self.token_mint.decimals
         )?;
+
+        let sol_amount = sol_amount.min(
+            self.bonding_curve_vault
+                .get_lamports()
+                .checked_sub(Rent::get()?.minimum_balance(0))
+                .unwrap_or(0)
+        );
         // Here we'll transfer the SOL directly to the vault (assuming it can accept SOL)
         let sol_transfer_ix = system_instruction::transfer(
             &self.bonding_curve_vault.to_account_info().key,
@@ -282,13 +254,10 @@ impl<'info> CreateRaydiumPool<'info> {
             ],
             &[&self.bonding_curve.get_vault_seeds()[..]]
         )?;
-
-        msg!("Transferred {} tokens and {} SOL to DAO vault", token_amount, sol_amount);
         Ok(())
     }
 
-    pub fn create_clmm_pool(&mut self, funding_amount_wsol: u64, token_amount: u64) -> Result<()> {
-        msg!("Creating CPMM Pool");
+    pub fn create_cpmm_pool(&mut self, funding_amount_wsol: u64, token_amount: u64) -> Result<()> {
         // get 20% of the real sol reserves as the funding amount for pool
         let migration_time = Clock::get()?.unix_timestamp as u64;
         let init_amount_0 = funding_amount_wsol; // the WSOL amount
@@ -303,7 +272,7 @@ impl<'info> CreateRaydiumPool<'info> {
             lp_mint: self.lp_mint.to_account_info(),
             creator_token_0: self.bonding_curve_base_token_account.to_account_info(),
             creator_token_1: self.bonding_curve_token_account.to_account_info(),
-            creator_lp_token: self.creator_lp_token.to_account_info(),
+            creator_lp_token: self.bonding_curve_lp_token.to_account_info(),
             token_0_vault: self.token_0_vault.to_account_info(),
             token_1_vault: self.token_1_vault.to_account_info(),
             create_pool_fee: self.create_pool_fee.to_account_info(),
@@ -327,10 +296,9 @@ impl<'info> CreateRaydiumPool<'info> {
     pub fn process(&mut self) -> Result<()> {
         assert!(self.bonding_curve.complete, "Bonding curve is not complete");
         self.revoke_mint_authority()?;
-        self.debug_log_state()?;
         let total_sol_raised = self.bonding_curve.real_sol_reserves;
         let cpmm_funding_amount = total_sol_raised.saturating_mul(20).checked_div(100).unwrap();
-        let mut dao_vault_amount = total_sol_raised.checked_sub(cpmm_funding_amount).unwrap();
+        let dao_vault_amount = total_sol_raised.checked_sub(cpmm_funding_amount).unwrap();
         let remaining_tokens = self.bonding_curve.token_total_supply.checked_div(2u64).unwrap();
         let cpmm_token_amount = remaining_tokens
             .checked_mul(30)
@@ -338,10 +306,7 @@ impl<'info> CreateRaydiumPool<'info> {
             .unwrap();
         let dao_token_amount = remaining_tokens.checked_sub(cpmm_token_amount).unwrap();
         self.wrap_sol_for_cpmm(cpmm_funding_amount)?;
-        self.create_clmm_pool(cpmm_funding_amount, cpmm_token_amount)?;
-        dao_vault_amount = dao_vault_amount.min(
-            dao_vault_amount.checked_sub(Rent::get()?.minimum_balance(0)).unwrap_or(0)
-        );
+        self.create_cpmm_pool(cpmm_funding_amount, cpmm_token_amount)?;
         self.transfer_to_dao_vault(dao_vault_amount, dao_token_amount)?;
         Ok(())
     }

@@ -56,3 +56,6 @@ address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 # raydium-locking authority in mainnet
 [[test.validator.clone]]
 address = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+
+[[test.validator.clone]]
+address="GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"

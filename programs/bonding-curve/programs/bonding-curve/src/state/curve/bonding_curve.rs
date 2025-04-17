@@ -1,4 +1,4 @@
-use anchor_lang::{ prelude::*, solana_program::native_token::LAMPORTS_PER_SOL };
+use anchor_lang::prelude::*;
 
 use crate::{ errors::ContractError, DEFAULT_DECIMALS, DEFAULT_SUPPLY };
 pub fn bps_mul(bps: u64, value: u64, divisor: u64) -> Option<u64> {
@@ -154,49 +154,25 @@ impl BondingCurve {
         self
     }
 
-    // Helper function to log the current state of the bonding curve for debugging.
-    fn log_state(&self, context: &str) {
-        msg!("{} - virtual_sol_reserves: {}", context, self.virtual_sol_reserves);
-        msg!("{} - real_sol_reserves: {}", context, self.real_sol_reserves);
-        msg!("{} - virtual_token_reserves: {}", context, self.virtual_token_reserves);
-        msg!("{} - real_token_reserves: {}", context, self.real_token_reserves);
-        msg!("{} - token_total_supply: {}", context, self.token_total_supply);
-    }
-
     // Debug version of apply_buy that logs each key step.
     pub fn apply_buy_debug(&mut self, mut sol_amount: u64) -> Option<BuyResult> {
-        msg!("Starting apply_buy_debug with sol_amount: {}", sol_amount);
-        self.log_state("Before buy");
-
         // Check SOL raise target.
         if self.sol_raise_target > 0 {
             let potential_new_sol_reserves = self.real_sol_reserves.checked_add(sol_amount)?;
-            msg!("Potential new real_sol_reserves: {}", potential_new_sol_reserves);
             if potential_new_sol_reserves >= self.sol_raise_target {
-                msg!("SOL raise target reached. Marking bonding curve as complete.");
                 self.complete = true;
             }
         }
 
         // Compute token amount from SOL amount.
         let mut token_amount = self.get_tokens_for_buy_sol(sol_amount)?;
-        msg!("Tokens received from get_tokens_for_buy_sol: {}", token_amount);
 
         // Check if purchase would exceed token reserves.
         if token_amount >= self.real_token_reserves {
-            msg!(
-                "Token amount exceeds available real_token_reserves: {}",
-                self.real_token_reserves
-            );
             token_amount = self.real_token_reserves;
             sol_amount = self.get_sol_for_exact_tokens(token_amount)?;
-            msg!("Adjusted sol_amount for exact tokens: {}", sol_amount);
             self.complete = true;
         }
-
-        // Log before reserves adjustment.
-        self.log_state("Before reserves adjustment (buy)");
-
         // Adjust reserves.
         let new_virtual_token_reserves = (self.virtual_token_reserves as u128).checked_sub(
             token_amount as u128
@@ -221,14 +197,6 @@ impl BondingCurve {
         self.real_token_reserves = new_real_token_reserves.try_into().ok()?;
         self.virtual_sol_reserves = new_virtual_sol_reserves.try_into().ok()?;
         self.real_sol_reserves = new_real_sol_reserves.try_into().ok()?;
-
-        self.log_state("After reserves adjustment (buy)");
-        msg!(
-            "Finished apply_buy_debug: token_amount: {}, sol_amount: {}, price_per_token: {}",
-            token_amount,
-            sol_amount,
-            price_per_token
-        );
         Some(BuyResult {
             token_amount,
             sol_amount,
@@ -238,17 +206,7 @@ impl BondingCurve {
 
     // Debug version of apply_sell that logs each key step.
     pub fn apply_sell_debug(&mut self, token_amount: u64) -> Option<SellResult> {
-        msg!("Starting apply_sell_debug with token_amount: {}", token_amount);
-        self.log_state("Before sell");
-
         let sol_amount = self.get_sol_for_sell_tokens(token_amount)?;
-        msg!("Calculated sol_amount from get_sol_for_sell_tokens: {}", sol_amount);
-        if sol_amount > self.real_sol_reserves {
-            msg!("Insufficient SOL reserves: {} < {}", self.real_sol_reserves, sol_amount);
-            return None;
-        }
-
-        self.log_state("Before reserves adjustment (sell)");
 
         let new_virtual_token_reserves = (self.virtual_token_reserves as u128).checked_add(
             token_amount as u128
@@ -271,15 +229,7 @@ impl BondingCurve {
         self.real_token_reserves = new_real_token_reserves.try_into().ok()?;
         self.virtual_sol_reserves = new_virtual_sol_reserves.try_into().ok()?;
         self.real_sol_reserves = new_real_sol_reserves;
-        msg!("Sol sold: {}", sol_amount);
 
-        self.log_state("After reserves adjustment (sell)");
-        msg!(
-            "Finished apply_sell_debug: token_amount: {}, sol_amount: {}, price_per_token: {}",
-            token_amount,
-            sol_amount,
-            price_per_token
-        );
         Some(SellResult {
             token_amount,
             sol_amount,
@@ -382,7 +332,6 @@ impl BondingCurve {
         self.real_token_reserves = new_real_token_reserves.try_into().ok()?;
         self.virtual_sol_reserves = new_virtual_sol_reserves.try_into().ok()?;
         self.real_sol_reserves = new_real_sol_reserves;
-        msg!("Sol sold: {}", sol_amount);
         Some(SellResult {
             token_amount,
             sol_amount,
@@ -410,7 +359,6 @@ impl BondingCurve {
         )?;
         // Safely convert to u64
         let recv = tokens_received.try_into().ok()?;
-        msg!("Tokens received: {}", recv);
         Some(recv)
     }
 
@@ -434,7 +382,6 @@ impl BondingCurve {
         )?;
         // Safely convert to u64
         let recv = sol_received.try_into().ok()?;
-        msg!("Sol received: {}", recv);
         Some(recv)
     }
 
@@ -463,7 +410,6 @@ impl BondingCurve {
 
         // Calculate SOL needed (difference between new and current SOL reserves)
         let sol_needed = new_virtual_sol_reserves.checked_sub(self.virtual_sol_reserves as u128)?;
-        msg!("Sol needed: {}", sol_needed.checked_div(LAMPORTS_PER_SOL as u128).unwrap());
         // Safely convert to u64
         sol_needed.try_into().ok()
     }

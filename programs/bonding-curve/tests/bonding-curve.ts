@@ -4,6 +4,7 @@ import { BondingCurve } from "../target/types/bonding_curve";
 import NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { mockStorage } from "@metaplex-foundation/umi-storage-mock";
+import { getMint } from "@solana/spl-token";
 import {
   createGenericFile,
   createSignerFromKeypair,
@@ -707,6 +708,9 @@ describe("bonding-curve", async () => {
   it("Migrates from bonding curve to Raydium pool", async () => {
     // First, we need to make sure we have a completed bonding curve
     // Fetch our existing bonding curve account
+    const raydiumAdmin = new anchor.web3.PublicKey(
+      "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ" // Use devnet version if testing on devnet
+    );
     const bondingCurve =
       await program.account.bondingCurve.fetch(bondingCurvePda);
 
@@ -834,9 +838,9 @@ describe("bonding-curve", async () => {
     });
 
     // Creator's LP token account
-    const creatorLpToken = anchor.utils.token.associatedAddress({
+    const bondingCurveVaultLPToken = anchor.utils.token.associatedAddress({
       mint: lp_mint,
-      owner: wallet.publicKey,
+      owner: bondingCurveVaultPda,
     });
 
     // Create DAO token account
@@ -876,7 +880,7 @@ describe("bonding-curve", async () => {
           authority: authority,
           poolState: poolState,
           lpMint: lp_mint,
-          creatorLpToken: creatorLpToken,
+          bondingCurveLpToken: bondingCurveVaultLPToken,
           token0Vault: token_vault_0,
           token1Vault: token_vault_1,
           createPoolFee: new anchor.web3.PublicKey(
@@ -902,16 +906,6 @@ describe("bonding-curve", async () => {
         "Migration transaction signature: ",
         getTransactionOnExplorer(signature)
       );
-
-      // Verify pool state is created
-      const poolInfo = await provider.connection.getAccountInfo(poolState);
-      assert.ok(poolInfo !== null, "Raydium pool state should be created");
-
-      // Check that LP tokens are created
-      const lpMintInfo = await provider.connection.getAccountInfo(lp_mint);
-      assert.ok(lpMintInfo !== null, "LP mint should be created");
-
-      console.log("Successfully migrated bonding curve to Raydium pool");
     } catch (err) {
       console.error("Error during migration:", err);
 

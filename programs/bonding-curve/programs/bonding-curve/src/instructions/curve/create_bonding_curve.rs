@@ -130,7 +130,6 @@ impl<'info> CreateBondingCurve<'info> {
             ),
             self.bonding_curve.token_total_supply
         )?;
-        msg!("Giving some SOL to vault...");
         self.init_bonding_curve_vault()?;
         Ok(())
     }
@@ -204,7 +203,6 @@ impl<'info> CreateBondingCurve<'info> {
             self.bonding_curve_vault.to_account_info().key,
             rent_exempt
         );
-        msg!("Transferring funds to bonding curve vault...");
         invoke(
             &transfer_ix,
             &[

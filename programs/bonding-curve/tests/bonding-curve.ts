@@ -5,6 +5,7 @@ import NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { mockStorage } from "@metaplex-foundation/umi-storage-mock";
 import {
+  createSyncNativeInstruction,
   getAssociatedTokenAddressSync,
   getOrCreateAssociatedTokenAccount,
   TOKEN_2022_PROGRAM_ID,
@@ -389,59 +390,10 @@ describe("bonding-curve", async () => {
     // Verify the user received tokens
     const userTokenAccountInfo =
       await provider.connection.getTokenAccountBalance(userTokenAccount);
-    console.log("User token balance:", userTokenAccountInfo.value.uiAmount);
     assert.ok(
       userTokenAccountInfo.value.uiAmount > 0,
       "User should have received tokens"
     );
-
-    // Fetch the bonding curve to verify state after buying
-    const bondingCurve =
-      await program.account.bondingCurve.fetch(bondingCurvePda);
-
-    // Remove treasury allocation check as that field is removed
-    console.log(
-      "Real token reserves:",
-      bondingCurve.realTokenReserves
-        .div(new anchor.BN(Math.pow(10, 6)))
-        .toString()
-    );
-    console.log(
-      "Virtual token reserves:",
-      bondingCurve.virtualTokenReserves
-        .div(new anchor.BN(Math.pow(10, 6)))
-        .toString()
-    );
-    console.log(
-      "Virtual SOL reserves:",
-      bondingCurve.virtualSolReserves
-        .div(new anchor.BN(anchor.web3.LAMPORTS_PER_SOL))
-        .toString()
-    );
-    console.log(
-      "Token total supply:",
-      bondingCurve.tokenTotalSupply
-        .div(new anchor.BN(Math.pow(10, 6)))
-        .toString()
-    );
-    console.log(
-      "Real SOL reserves:",
-      bondingCurve.realSolReserves
-        .div(new anchor.BN(anchor.web3.LAMPORTS_PER_SOL))
-        .toString()
-    );
-    console.log(
-      "SOL raise target:",
-      bondingCurve.solRaiseTarget
-        .div(new anchor.BN(anchor.web3.LAMPORTS_PER_SOL))
-        .toString()
-    );
-    console.log("Complete:", bondingCurve.complete);
-    console.log("Creator:", bondingCurve.creator.toString());
-    console.log("Mint:", bondingCurve.mint.toString());
-    console.log("Token account:", bondingCurveTokenAccount.toString());
-    const realSolValue = await provider.connection.getBalance(bondingCurvePda);
-    console.log("Real SOL value:", realSolValue / anchor.web3.LAMPORTS_PER_SOL);
   });
 
   it("Sell tokens to the bonding curve", async () => {
@@ -449,27 +401,6 @@ describe("bonding-curve", async () => {
       mint: mintKey,
       owner: wallet.publicKey,
     });
-
-    // First check how many tokens the user has
-    const userTokenBalance =
-      await provider.connection.getTokenAccountBalance(userTokenAccount);
-    console.log(
-      "User token balance before sell:",
-      userTokenBalance.value.uiAmount
-    );
-
-    // Check the bonding curve's SOL balance
-    const bondingCurveSolBalance =
-      await provider.connection.getBalance(bondingCurvePda);
-    console.log(
-      "Bonding curve SOL balance:",
-      bondingCurveSolBalance / anchor.web3.LAMPORTS_PER_SOL
-    );
-
-    // Fetch the bonding curve state
-    const bondingCurveState =
-      await program.account.bondingCurve.fetch(bondingCurvePda);
-
     // First, let's try a super tiny amount - just 10 tokens
     const tokenAmount = 10;
 
@@ -477,11 +408,6 @@ describe("bonding-curve", async () => {
     const sellAmount = new anchor.BN(
       tokenAmount * Math.pow(10, metadataOfToken.decimals)
     );
-
-    console.log(
-      `Selling ${tokenAmount} tokens (${sellAmount.toString()} raw amount)`
-    );
-
     // Set a very small minimum out amount
     const minOutAmount = new anchor.BN(1); // Minimum 1 lamport
 
@@ -522,41 +448,6 @@ describe("bonding-curve", async () => {
       console.log(
         "Sell transaction signature: ",
         getTransactionOnExplorer(signature)
-      );
-
-      // Verify the user received SOL
-      const userSolBalanceAfter = await provider.connection.getBalance(
-        wallet.publicKey
-      );
-      console.log(
-        "User SOL balance after sell:",
-        userSolBalanceAfter / anchor.web3.LAMPORTS_PER_SOL
-      );
-
-      // Verify token balance changed
-      const userTokenAccountInfoAfter =
-        await provider.connection.getTokenAccountBalance(userTokenAccount);
-      console.log(
-        "User token balance after sell:",
-        userTokenAccountInfoAfter.value.uiAmount
-      );
-
-      // Fetch the bonding curve data after sell
-      const bondingCurveAfter =
-        await program.account.bondingCurve.fetch(bondingCurvePda);
-
-      // Remove treasury allocation check as that field has been removed
-      console.log(
-        "SOL reserves after sell:",
-        bondingCurveAfter.realSolReserves.toString()
-      );
-      console.log(
-        "Virtual SOL reserves after sell:",
-        bondingCurveAfter.virtualSolReserves.toString()
-      );
-      console.log(
-        "Virtual token reserves after sell:",
-        bondingCurveAfter.virtualTokenReserves.toString()
       );
     } catch (err) {
       console.error("Error during sell:", err);
@@ -599,17 +490,12 @@ describe("bonding-curve", async () => {
 
     // Check if the bonding curve is complete
     if (!bondingCurve.complete) {
-      console.log("Bonding curve is not complete yet, let's complete it first");
       // We need to fulfill the SOL target to mark it as completed
       const remainingToTarget = bondingCurve.solRaiseTarget.sub(
         bondingCurve.realSolReserves
       );
 
       if (remainingToTarget.gt(new anchor.BN(0))) {
-        console.log(
-          `Remaining SOL to reach target: ${remainingToTarget.div(new anchor.BN(anchor.web3.LAMPORTS_PER_SOL)).toString()} SOL`
-        );
-
         // Create buy transaction to meet the target
         const userTokenAccount = anchor.utils.token.associatedAddress({
           mint: mintKey,
@@ -663,7 +549,6 @@ describe("bonding-curve", async () => {
         // Verify the bonding curve is now completed
         const updatedBondingCurve =
           await program.account.bondingCurve.fetch(bondingCurvePda);
-        console.log("Bonding curve completed:", updatedBondingCurve.complete);
         assert.ok(
           updatedBondingCurve.complete,
           "Bonding curve should be complete now"
@@ -673,7 +558,6 @@ describe("bonding-curve", async () => {
 
     // Fetch  proposal to get treasury address
     const proposal = await program.account.proposal.fetch(proposalPda);
-    console.log("Treasury address:", proposal.treasuryAddress.toString());
 
     // Set up transaction to create Raydium pool
     const modifyComputeUnits =
@@ -732,11 +616,6 @@ describe("bonding-curve", async () => {
         "Migration transaction signature: ",
         getTransactionOnExplorer(signature)
       );
-      // const authorityLpTokenAccountInfo =
-      //   await provider.connection.getTokenAccountBalance(lp_mint);
-      // console.log(
-      //   `LP mint in user's lp token account: ${authorityLpTokenAccountInfo.value.uiAmount}`
-      // );
     } catch (err) {
       console.error("Error during migration:", err);
 
@@ -780,14 +659,13 @@ describe("bonding-curve", async () => {
       "Claim LP tokens transaction signature: ",
       getTransactionOnExplorer(claimTx)
     );
-    const creatorLpTokenAccountInfo =
-      await provider.connection.getTokenAccountBalance(creatorLpTokenAccount);
-    console.log(
-      `Creator LP token account balance: ${creatorLpTokenAccountInfo.value.uiAmount}`
-    );
   });
 
   it("Lock lp tokens in Raydium pool", async () => {
+    const modifyComputeUnits =
+      anchor.web3.ComputeBudgetProgram.setComputeUnitLimit({
+        units: 1000000,
+      });
     const lockTx = await program.methods
       .lockCpmmLiquidity()
       .accountsPartial({
@@ -816,6 +694,7 @@ describe("bonding-curve", async () => {
         user: wallet.publicKey,
         userLpTokenAccount: creatorLpTokenAccount,
       })
+      .preInstructions([modifyComputeUnits])
       .signers([fee_nft_mint])
       .rpc();
     console.log(
@@ -865,10 +744,65 @@ describe("bonding-curve", async () => {
         token1Program: TOKEN_2022_PROGRAM_ID,
       })
       .rpc();
-
     console.log(
       "Claim locked liquidity transaction signature: ",
       getTransactionOnExplorer(claimTx)
+    );
+  });
+
+  it("Swap tokens on Raydium", async () => {
+    const userTokenAccount = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        wallet.payer,
+        mintKey,
+        wallet.publicKey,
+        true
+      )
+    ).address;
+    const userBaseTokenAccount = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        wallet.payer,
+        WSOL_ID,
+        wallet.publicKey,
+        true
+      )
+    ).address;
+    const tx = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.transfer({
+        fromPubkey: wallet.publicKey,
+        toPubkey: userBaseTokenAccount,
+        lamports: 100 * LAMPORTS_PER_SOL,
+      }),
+      createSyncNativeInstruction(userBaseTokenAccount)
+    );
+    const swapIx = await program.methods
+      .raydiumSwap(new anchor.BN(1 * LAMPORTS_PER_SOL), new BN(500))
+      .accountsPartial({
+        cpSwapProgram: CPMM_PROGRAM_ID,
+        user: wallet.publicKey,
+        authority: authority,
+        ammConfig: AMM_CONFIG_ID,
+        poolState,
+        inputTokenAccount: userBaseTokenAccount,
+        outputTokenAccount: userTokenAccount,
+        inputVault: token_vault_0,
+        outputVault: token_vault_1,
+        inputTokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        outputTokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        inputTokenMint: WSOL_ID,
+        outputTokenMint: mintKey,
+        observationState,
+      })
+      .instruction();
+    tx.add(swapIx);
+    const signature = await provider.sendAndConfirm(tx, [], {
+      skipPreflight: true,
+    });
+    console.log(
+      "Raydium swap and wrap transaction signature: ",
+      getTransactionOnExplorer(signature)
     );
   });
 });

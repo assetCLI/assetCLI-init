@@ -38,16 +38,20 @@ pub mod bonding_curve {
     pub fn claim_creator_lp(ctx: Context<ClaimCreatorLp>) -> Result<()> {
         ctx.accounts.process()
     }
-    
-    pub fn lock_cpmm_liquidity(
-        ctx: Context<LockCpmmLiquidity>,
-    ) -> Result<()> {
+
+    pub fn lock_cpmm_liquidity(ctx: Context<LockCpmmLiquidity>) -> Result<()> {
         ctx.accounts.process()
     }
 
-    pub fn harvest_locked_cpmm_liquidity(
-        ctx: Context<HarvestLockedLiquidity>,
-    ) -> Result<()> {
+    pub fn harvest_locked_cpmm_liquidity(ctx: Context<HarvestLockedLiquidity>) -> Result<()> {
         ctx.accounts.process()
+    }
+
+    pub fn raydium_swap(
+        ctx: Context<RaydiumSwap>,
+        amount_in: u64,
+        minimum_amount_out: u64
+    ) -> Result<()> {
+        ctx.accounts.process(amount_in, minimum_amount_out)
     }
 }

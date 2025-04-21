@@ -9,7 +9,7 @@ use raydium_cpmm_cpi::{
     program::RaydiumCpmm,
     states::{ AmmConfig, OBSERVATION_SEED, POOL_LP_MINT_SEED, POOL_SEED, POOL_VAULT_SEED },
 };
-use crate::{ BondingCurve, DAOProposal, Global, WSOL_ID, errors::ContractError };
+use crate::{ errors::ContractError, BondingCurve, Global, Proposal, WSOL_ID };
 
 #[derive(Accounts)]
 pub struct CreateRaydiumPool<'info> {
@@ -60,22 +60,23 @@ pub struct CreateRaydiumPool<'info> {
         constraint = bonding_curve.mint == token_mint.key() @ ContractError::NotBondingCurveMint,
     )]
     pub bonding_curve_base_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(seeds = [DAOProposal::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()], bump)]
-    pub dao_proposal: Box<Account<'info, DAOProposal>>,
-    /// CHECK: DAO vault, assert in validation function
+    #[account(seeds = [Proposal::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()], bump)]
+    pub proposal: Box<Account<'info, Proposal>>,
+    /// CHECK: Treasury address, assert in validation function
     #[account(mut,
-        constraint = dao_vault.key() == dao_proposal.treasury_address @ ContractError::InvalidTreasury
+        constraint = proposal_treasury.key() == proposal.treasury_address @ ContractError::InvalidTreasury
     )]
-    pub dao_vault: UncheckedAccount<'info>,
-    /// CHECK: Governance address, assert in validation function
-    pub dao_governance: UncheckedAccount<'info>,
+    pub proposal_treasury: UncheckedAccount<'info>,
+    /// CHECK: Proposal authority, assert in validation function
+    #[account(mut)]
+    pub proposal_authority: UncheckedAccount<'info>,
     #[account(
         init_if_needed,
         associated_token::mint = token_mint,
-        associated_token::authority = dao_governance,
+        associated_token::authority = proposal_authority,
         payer = creator
     )]
-    pub dao_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub proposal_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
     pub cp_swap_program: Program<'info, RaydiumCpmm>,
     pub amm_config: Box<Account<'info, AmmConfig>>,
     /// CHECK: pool vault and lp mint authority
@@ -211,17 +212,21 @@ impl<'info> CreateRaydiumPool<'info> {
         Ok(())
     }
 
-    pub fn transfer_to_dao_vault(&mut self, sol_amount: u64, token_amount: u64) -> Result<()> {
-        let treasury_address = self.dao_proposal.treasury_address;
-        assert_eq!(treasury_address, self.dao_vault.key(), "DAO vault address mismatch");
+    pub fn transfer_to_treasury(&mut self, sol_amount: u64, token_amount: u64) -> Result<()> {
+        let treasury_address = self.proposal.treasury_address;
+        assert_eq!(
+            treasury_address,
+            self.proposal_treasury.key(),
+            "Proposal Authority address mismatch"
+        );
         let signer_seeds = self.bonding_curve.get_vault_seeds();
         let signer = &[&signer_seeds[..]];
-        // Transfer tokens to the DAO vault
+        // Transfer tokens to the treasury
         let token_transfer_ctx = CpiContext::new_with_signer(
             self.token_program.to_account_info(),
             anchor_spl::token_interface::TransferChecked {
                 from: self.bonding_curve_token_account.to_account_info(),
-                to: self.dao_token_account.to_account_info(),
+                to: self.proposal_token_account.to_account_info(),
                 mint: self.token_mint.to_account_info(),
                 authority: self.bonding_curve_vault.to_account_info(),
             },
@@ -242,17 +247,39 @@ impl<'info> CreateRaydiumPool<'info> {
         // Here we'll transfer the SOL directly to the vault (assuming it can accept SOL)
         let sol_transfer_ix = system_instruction::transfer(
             &self.bonding_curve_vault.to_account_info().key,
-            &self.dao_vault.key(),
+            &self.proposal_treasury.key(),
             sol_amount
         );
         solana_program::program::invoke_signed(
             &sol_transfer_ix,
             &[
-                self.bonding_curve_vault.to_account_info(), // from account
-                self.dao_vault.to_account_info(),
-                self.system_program.to_account_info(), // system program
+                self.bonding_curve_vault.to_account_info(),
+                self.proposal_treasury.to_account_info(),
+                self.system_program.to_account_info(),
             ],
             &[&self.bonding_curve.get_vault_seeds()[..]]
+        )?;
+        Ok(())
+    }
+
+    pub fn transfer_fee_for_migration(&self) -> Result<()> {
+        assert!(
+            self.fee_receiver.to_account_info().key() == self.global.fee_receiver,
+            "Fee receiver address mismatch"
+        );
+        let fee_amount = self.global.migrate_fee_amount;
+        let transfer_ix = system_instruction::transfer(
+            self.creator.key,
+            self.fee_receiver.key,
+            fee_amount
+        );
+        solana_program::program::invoke(
+            &transfer_ix,
+            &[
+                self.creator.to_account_info(),
+                self.fee_receiver.to_account_info(),
+                self.system_program.to_account_info(),
+            ]
         )?;
         Ok(())
     }
@@ -307,7 +334,8 @@ impl<'info> CreateRaydiumPool<'info> {
         let dao_token_amount = remaining_tokens.checked_sub(cpmm_token_amount).unwrap();
         self.wrap_sol_for_cpmm(cpmm_funding_amount)?;
         self.create_cpmm_pool(cpmm_funding_amount, cpmm_token_amount)?;
-        self.transfer_to_dao_vault(dao_vault_amount, dao_token_amount)?;
+        self.transfer_to_treasury(dao_vault_amount, dao_token_amount)?;
+        self.transfer_fee_for_migration()?;
         Ok(())
     }
 }

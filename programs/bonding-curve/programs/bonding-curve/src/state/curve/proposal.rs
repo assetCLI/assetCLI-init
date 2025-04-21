@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 #[account]
 #[derive(InitSpace, Debug, Default)]
-pub struct DAOProposal {
+pub struct Proposal {
     // Core DAO & mint information
     pub mint: Pubkey,
     pub creator: Pubkey,
@@ -12,9 +12,8 @@ pub struct DAOProposal {
     pub name: String,
     #[max_len(256)]
     pub description: String,
-    pub realm_address: Pubkey,
-    pub treasury_address: Pubkey, // Treasury where funds are sent after fundraising
-    pub governance_address: Pubkey, // Governance address for the DAO
+    pub treasury_address: Pubkey,
+    pub authority_address: Pubkey,
 
     // Optional social/community links
     #[max_len(32)]
@@ -35,10 +34,9 @@ pub struct DAOProposal {
     // Investment thesis
     #[max_len(256)]
     pub bullish_thesis: Option<String>,
-
-    // Governance parameters
+    
     pub bump: u8,
 }
-impl DAOProposal {
-    pub const SEED_PREFIX: &'static str = "dao_proposal";
+impl Proposal {
+    pub const SEED_PREFIX: &'static str = "proposal";
 }

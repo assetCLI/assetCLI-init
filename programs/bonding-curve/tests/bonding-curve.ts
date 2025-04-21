@@ -4,7 +4,11 @@ import { BondingCurve } from "../target/types/bonding_curve";
 import NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { mockStorage } from "@metaplex-foundation/umi-storage-mock";
-import { getMint } from "@solana/spl-token";
+import {
+  getAssociatedTokenAddressSync,
+  getOrCreateAssociatedTokenAccount,
+  TOKEN_2022_PROGRAM_ID,
+} from "@solana/spl-token";
 import {
   createGenericFile,
   createSignerFromKeypair,
@@ -22,7 +26,7 @@ describe("bonding-curve", async () => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
   const provider = anchor.AnchorProvider.env();
-  const wallet = provider.wallet;
+  const wallet = provider.wallet as NodeWallet;
   const program = anchor.workspace.BondingCurve as Program<BondingCurve>;
 
   // Set up UMI
@@ -79,8 +83,8 @@ describe("bonding-curve", async () => {
   });
 
   // Find DAO proposal PDA
-  const [daoProposalPda] = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("dao_proposal"), mintKey.toBuffer()],
+  const [proposalPda] = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("proposal"), mintKey.toBuffer()],
     program.programId
   );
 
@@ -94,10 +98,107 @@ describe("bonding-curve", async () => {
   const WSOL_ID = new anchor.web3.PublicKey(
     "So11111111111111111111111111111111111111112"
   );
+  // Address of the Locking CPMM program on devnet
+  const LOCK_CPMM_PROGRAM_ID = new anchor.web3.PublicKey(
+    "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE"
+  );
 
-  const realmAddress = Keypair.generate().publicKey; // Placeholder for realm address
-  const treasuryAddress = Keypair.generate().publicKey; // Placeholder for treasury address
-  const governanceAddress = Keypair.generate().publicKey; // Placeholder for governance address
+  // Address of the Locking CPMM program on devnet
+  const LOCK_CPMM_AUTHORITY_ID = new anchor.web3.PublicKey(
+    "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+  );
+
+  // Address of the Memo program
+  const MEMO_PROGRAM = new anchor.web3.PublicKey(
+    "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+  );
+
+  const treasuryAddress = Keypair.generate().publicKey;
+  const authorityAddressForProposal = wallet.publicKey;
+
+  // Calculate PDA addresses for Raydium integration
+  const poolState = anchor.web3.PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("pool"),
+      AMM_CONFIG_ID.toBuffer(),
+      WSOL_ID.toBuffer(),
+      mintKey.toBuffer(),
+    ],
+    CPMM_PROGRAM_ID
+  )[0];
+
+  const fee_nft_mint = anchor.web3.Keypair.generate();
+
+  const authority = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("vault_and_lp_mint_auth_seed")],
+    CPMM_PROGRAM_ID
+  )[0];
+
+  const observationState = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("observation"), poolState.toBuffer()],
+    CPMM_PROGRAM_ID
+  )[0];
+
+  const lp_mint = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("pool_lp_mint"), poolState.toBuffer()],
+    CPMM_PROGRAM_ID
+  )[0];
+
+  const token_vault_0 = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("pool_vault"), poolState.toBuffer(), WSOL_ID.toBuffer()],
+    CPMM_PROGRAM_ID
+  )[0];
+
+  const token_vault_1 = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("pool_vault"), poolState.toBuffer(), mintKey.toBuffer()],
+    CPMM_PROGRAM_ID
+  )[0];
+
+  // Create bonding curve base token account (WSOL)
+  const bondingCurveBaseTokenAccount = anchor.utils.token.associatedAddress({
+    mint: WSOL_ID,
+    owner: bondingCurveVaultPda,
+  });
+
+  // Creator's LP token account
+  const bondingCurveVaultLPToken = anchor.utils.token.associatedAddress({
+    mint: lp_mint,
+    owner: bondingCurveVaultPda,
+  });
+
+  // Create proposal token account
+  const proposalTokenAccount = anchor.utils.token.associatedAddress({
+    mint: mintKey,
+    owner: authorityAddressForProposal,
+  });
+
+  const creatorLpTokenAccount = anchor.utils.token.associatedAddress({
+    mint: lp_mint,
+    owner: wallet.publicKey,
+  });
+
+  const lockedLiquidity = anchor.web3.PublicKey.findProgramAddressSync(
+    [Buffer.from("locked_liquidity"), fee_nft_mint.publicKey.toBuffer()],
+    LOCK_CPMM_PROGRAM_ID
+  )[0];
+
+  const feeNftMetadataAddress = new anchor.web3.PublicKey(
+    findMetadataPda(umi, {
+      mint: publicKey(mintKey),
+    })[0].toString()
+  );
+
+  const creatorNftMintAccount = getAssociatedTokenAddressSync(
+    fee_nft_mint.publicKey,
+    wallet.publicKey,
+    true
+  );
+
+  const lockedLpVault = anchor.utils.token.associatedAddress({
+    mint: lp_mint,
+    owner: LOCK_CPMM_AUTHORITY_ID,
+  });
+
   // Upload token.png for URI
   let tokenUri: string;
 
@@ -169,12 +270,10 @@ describe("bonding-curve", async () => {
       tokenTotalSupply: new anchor.BN(100_000_000).mul(
         new anchor.BN(Math.pow(10, 6))
       ), // 100 million tokens
-      // DAO proposal metadata
-      daoName: "Test DAO",
-      daoDescription: "A DAO for testing the bonding curve",
-      realmAddress,
+      // proposal metadata
+      description: "A DAO for testing the bonding curve",
       treasuryAddress,
-      governanceAddress, // Added governance address
+      authorityAddress: authorityAddressForProposal,
       twitterHandle: "@testdao",
       discordLink: "https://discord.gg/testdao",
       websiteUrl: "https://testdao.xyz",
@@ -191,7 +290,7 @@ describe("bonding-curve", async () => {
           mint: mintKey,
           creator: wallet.publicKey,
           bondingCurve: bondingCurvePda,
-          daoProposal: daoProposalPda, // Add DAO proposal account
+          proposal: proposalPda,
           bondingCurveTokenAccount: bondingCurveTokenAccount,
           global: globalStateAddress,
 
@@ -216,13 +315,11 @@ describe("bonding-curve", async () => {
         await program.account.bondingCurve.fetch(bondingCurvePda);
 
       // Fetch and verify the DAO proposal
-      const daoProposal =
-        await program.account.daoProposal.fetch(daoProposalPda);
+      const proposal = await program.account.proposal.fetch(proposalPda);
 
-      assert.equal(daoProposal.name, params.daoName);
-      assert.equal(daoProposal.description, params.daoDescription);
-      assert.deepEqual(daoProposal.realmAddress, params.realmAddress);
-      assert.deepEqual(daoProposal.mint, mintKey);
+      assert.equal(proposal.name, params.name);
+      assert.equal(proposal.description, params.description);
+      assert.deepEqual(proposal.mint, mintKey);
     } catch (err) {
       console.error("Error creating bonding curve:", err);
       if (err.message.includes("already initialized")) {
@@ -276,7 +373,7 @@ describe("bonding-curve", async () => {
         associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
         clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
         bondingCurveVault: bondingCurveVaultPda,
-        daoProposal: daoProposalPda, // Include dao proposal account
+        proposal: proposalPda,
       })
       .instruction();
 
@@ -409,6 +506,7 @@ describe("bonding-curve", async () => {
         mint: mintKey,
         bondingCurve: bondingCurvePda,
         bondingCurveTokenAccount: bondingCurveTokenAccount,
+        proposal: proposalPda,
         userTokenAccount: userTokenAccount,
         systemProgram: anchor.web3.SystemProgram.programId,
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
@@ -490,221 +588,6 @@ describe("bonding-curve", async () => {
     }
   });
 
-  it("Mark bonding curve complete when reaching SOL target", async () => {
-    // Create a new bonding curve with small target
-    const [smallTargetMint] = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("bonding_curve_token"),
-        Buffer.from(metadataOfToken.name + "_small_target"),
-        wallet.publicKey.toBuffer(),
-      ],
-      program.programId
-    );
-
-    const [smallTargetBondingCurvePda] =
-      anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("bonding_curve"), smallTargetMint.toBuffer()],
-        program.programId
-      );
-
-    const smallTargetMetadataAddress = new anchor.web3.PublicKey(
-      findMetadataPda(umi, {
-        mint: publicKey(smallTargetMint),
-      })[0].toString()
-    );
-
-    const [smallTargetBondingCurveVaultPda] =
-      anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("bonding_curve_vault"), smallTargetMint.toBuffer()],
-        program.programId
-      );
-
-    const smallTargetBondingCurveTokenAccount =
-      anchor.utils.token.associatedAddress({
-        mint: smallTargetMint,
-        owner: smallTargetBondingCurveVaultPda,
-      });
-
-    // Find DAO proposal PDA for this new bonding curve
-    const [smallTargetDaoProposalPda] =
-      anchor.web3.PublicKey.findProgramAddressSync(
-        [Buffer.from("dao_proposal"), smallTargetMint.toBuffer()],
-        program.programId
-      );
-
-    // Set a small SOL raise target for testing
-    const smallSolRaiseTarget = new anchor.BN(
-      0.1 * anchor.web3.LAMPORTS_PER_SOL
-    );
-
-    // Create the bonding curve with the small target - include DAO proposal params
-    await program.methods
-      .createBondingCurve({
-        name: metadataOfToken.name + "_small_target",
-        symbol: metadataOfToken.symbol,
-        uri: metadataOfToken.uri,
-        solRaiseTarget: smallSolRaiseTarget,
-        decimals: 6,
-        tokenTotalSupply: new BN(100_000_000), // 100 million tokens
-
-        // DAO proposal params
-        daoName: "Small Target DAO",
-        daoDescription: "A test DAO with small SOL target",
-        realmAddress: wallet.publicKey,
-        treasuryAddress: wallet.publicKey, // Added treasury address
-        governanceAddress: wallet.publicKey, // Added governance address
-        twitterHandle: "SmallDaoTest",
-        discordLink: "https://discord.gg/smalldao",
-        websiteUrl: "https://smalldao.xyz",
-        logoUri: tokenUri,
-        founderName: "Small Founder",
-        founderTwitter: "SmallFounderTest",
-        bullishThesis:
-          "This DAO will test completion when SOL target is reached",
-      })
-      .accountsPartial({
-        mint: smallTargetMint,
-        creator: wallet.publicKey,
-        bondingCurve: smallTargetBondingCurvePda,
-        daoProposal: smallTargetDaoProposalPda, // Add dao proposal account
-        bondingCurveTokenAccount: smallTargetBondingCurveTokenAccount,
-        global: globalStateAddress,
-        metadata: smallTargetMetadataAddress,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        systemProgram: anchor.web3.SystemProgram.programId,
-        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        bondingCurveVault: smallTargetBondingCurveVaultPda,
-        tokenMetadataProgram: new anchor.web3.PublicKey(
-          "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
-        ),
-        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
-      })
-      .signers([])
-      .rpc();
-
-    console.log("Created bonding curve with small SOL target");
-
-    // Verify bonding curve was created with the correct SOL target
-    const initialBondingCurve = await program.account.bondingCurve.fetch(
-      smallTargetBondingCurvePda
-    );
-
-    assert.equal(
-      initialBondingCurve.solRaiseTarget.toString(),
-      smallSolRaiseTarget.toString(),
-      "Bonding curve should be initialized with the correct SOL target"
-    );
-
-    assert.equal(
-      initialBondingCurve.complete,
-      false,
-      "Bonding curve should start as not complete"
-    );
-
-    // Verify DAO proposal was created
-    const initialDaoProposal = await program.account.daoProposal.fetch(
-      smallTargetDaoProposalPda
-    );
-
-    assert.equal(initialDaoProposal.name, "Small Target DAO");
-    assert.equal(
-      initialDaoProposal.description,
-      "A test DAO with small SOL target"
-    );
-
-    // Create user token account for this test
-    const smallTargetUserTokenAccount = anchor.utils.token.associatedAddress({
-      mint: smallTargetMint,
-      owner: wallet.publicKey,
-    });
-
-    // Buy parameters - exceed the target
-    const buyAmount = new anchor.BN(0.2 * anchor.web3.LAMPORTS_PER_SOL);
-
-    // Create modifyComputeUnits instruction to increase compute units
-    const modifyComputeUnits =
-      anchor.web3.ComputeBudgetProgram.setComputeUnitLimit({
-        units: 1000000, // Increasing to 1M compute units
-      });
-
-    // Execute the buy with increased compute units
-    const tx = new anchor.web3.Transaction().add(modifyComputeUnits);
-
-    // Add the swap instruction
-    const swapInstruction = await program.methods
-      .swap({
-        baseIn: false,
-        amount: buyAmount,
-        minOutAmount: new anchor.BN(1),
-      })
-      .accountsPartial({
-        user: wallet.publicKey,
-        global: globalStateAddress,
-        feeReceiver: wallet.publicKey,
-        mint: smallTargetMint,
-        bondingCurve: smallTargetBondingCurvePda,
-        bondingCurveTokenAccount: smallTargetBondingCurveTokenAccount,
-        userTokenAccount: smallTargetUserTokenAccount,
-        daoProposal: smallTargetDaoProposalPda, // Include dao proposal account
-        systemProgram: anchor.web3.SystemProgram.programId,
-        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
-        clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
-        bondingCurveVault: smallTargetBondingCurveVaultPda,
-      })
-      .instruction();
-
-    tx.add(swapInstruction);
-
-    // Send the transaction
-    const signature = await provider.sendAndConfirm(tx);
-    console.log(
-      "Buy transaction signature: ",
-      getTransactionOnExplorer(signature)
-    );
-
-    // Fetch the bonding curve to verify it's marked as complete
-    const bondingCurve = await program.account.bondingCurve.fetch(
-      smallTargetBondingCurvePda
-    );
-
-    console.log("Bonding curve complete status:", bondingCurve.complete);
-    console.log(
-      "SOL raise target:",
-      smallSolRaiseTarget.toString(),
-      "lamports (",
-      smallSolRaiseTarget.toNumber() / anchor.web3.LAMPORTS_PER_SOL,
-      "SOL)"
-    );
-    console.log(
-      "Actual SOL raised:",
-      bondingCurve.realSolReserves.toString(),
-      "lamports (",
-      bondingCurve.realSolReserves.toNumber() / anchor.web3.LAMPORTS_PER_SOL,
-      "SOL)"
-    );
-
-    assert.ok(
-      bondingCurve.complete,
-      "Bonding curve should be marked as complete when SOL target is exceeded"
-    );
-
-    assert.ok(
-      bondingCurve.realSolReserves.gte(smallSolRaiseTarget),
-      "SOL reserves should meet or exceed the target"
-    );
-
-    // Calculate how much was exceeded by
-    const excessAmount = bondingCurve.realSolReserves.sub(smallSolRaiseTarget);
-    console.log(
-      "Target exceeded by:",
-      excessAmount.toString(),
-      "lamports (",
-      excessAmount.toNumber() / anchor.web3.LAMPORTS_PER_SOL,
-      "SOL)"
-    );
-  });
-
   it("Migrates from bonding curve to Raydium pool", async () => {
     // First, we need to make sure we have a completed bonding curve
     // Fetch our existing bonding curve account
@@ -768,7 +651,7 @@ describe("bonding-curve", async () => {
             associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
             clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
             bondingCurveVault: bondingCurveVaultPda,
-            daoProposal: daoProposalPda,
+            proposal: proposalPda,
           })
           .instruction();
 
@@ -788,66 +671,9 @@ describe("bonding-curve", async () => {
       }
     }
 
-    // Fetch DAO proposal to get treasury address
-    const daoProposal = await program.account.daoProposal.fetch(daoProposalPda);
-    console.log(
-      "DAO treasury address:",
-      daoProposal.treasuryAddress.toString()
-    );
-
-    // Calculate PDA addresses for Raydium integration
-    const poolState = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("pool"),
-        AMM_CONFIG_ID.toBuffer(),
-        WSOL_ID.toBuffer(),
-        mintKey.toBuffer(),
-      ],
-      CPMM_PROGRAM_ID
-    )[0];
-
-    const authority = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("vault_and_lp_mint_auth_seed")],
-      CPMM_PROGRAM_ID
-    )[0];
-
-    const observationState = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("observation"), poolState.toBuffer()],
-      CPMM_PROGRAM_ID
-    )[0];
-
-    const lp_mint = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("pool_lp_mint"), poolState.toBuffer()],
-      CPMM_PROGRAM_ID
-    )[0];
-
-    const token_vault_0 = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("pool_vault"), poolState.toBuffer(), WSOL_ID.toBuffer()],
-      CPMM_PROGRAM_ID
-    )[0];
-
-    const token_vault_1 = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("pool_vault"), poolState.toBuffer(), mintKey.toBuffer()],
-      CPMM_PROGRAM_ID
-    )[0];
-
-    // Create bonding curve base token account (WSOL)
-    const bondingCurveBaseTokenAccount = anchor.utils.token.associatedAddress({
-      mint: WSOL_ID,
-      owner: bondingCurveVaultPda,
-    });
-
-    // Creator's LP token account
-    const bondingCurveVaultLPToken = anchor.utils.token.associatedAddress({
-      mint: lp_mint,
-      owner: bondingCurveVaultPda,
-    });
-
-    // Create DAO token account
-    const daoTokenAccount = anchor.utils.token.associatedAddress({
-      mint: mintKey,
-      owner: daoProposal.realmAddress,
-    });
+    // Fetch  proposal to get treasury address
+    const proposal = await program.account.proposal.fetch(proposalPda);
+    console.log("Treasury address:", proposal.treasuryAddress.toString());
 
     // Set up transaction to create Raydium pool
     const modifyComputeUnits =
@@ -871,10 +697,10 @@ describe("bonding-curve", async () => {
           bondingCurve: bondingCurvePda,
           bondingCurveTokenAccount: bondingCurveTokenAccount,
           bondingCurveBaseTokenAccount: bondingCurveBaseTokenAccount,
-          daoProposal: daoProposalPda,
-          daoVault: daoProposal.treasuryAddress,
-          daoGovernance: daoProposal.realmAddress,
-          daoTokenAccount: daoTokenAccount,
+          proposal: proposalPda,
+          proposalTreasury: proposal.treasuryAddress,
+          proposalAuthority: proposal.authorityAddress,
+          proposalTokenAccount: proposalTokenAccount,
           cpSwapProgram: CPMM_PROGRAM_ID,
           ammConfig: AMM_CONFIG_ID,
           authority: authority,
@@ -906,6 +732,11 @@ describe("bonding-curve", async () => {
         "Migration transaction signature: ",
         getTransactionOnExplorer(signature)
       );
+      // const authorityLpTokenAccountInfo =
+      //   await provider.connection.getTokenAccountBalance(lp_mint);
+      // console.log(
+      //   `LP mint in user's lp token account: ${authorityLpTokenAccountInfo.value.uiAmount}`
+      // );
     } catch (err) {
       console.error("Error during migration:", err);
 
@@ -923,6 +754,122 @@ describe("bonding-curve", async () => {
         throw err;
       }
     }
+  });
+
+  it("Claim lp tokens from Raydium pool", async () => {
+    const claimTx = await program.methods
+      .claimCreatorLp()
+      .accountsPartial({
+        creator: wallet.publicKey,
+        global: globalStateAddress,
+        bondingCurve: bondingCurvePda,
+        bondingCurveVault: bondingCurveVaultPda,
+        lpMint: lp_mint,
+        bondingCurveLpTokenAccount: bondingCurveVaultLPToken,
+        feeReceiver: wallet.publicKey,
+        proposal: proposalPda,
+        proposalAuthority: authorityAddressForProposal,
+        tokenMint: mintKey,
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        creatorLpTokenAccount: creatorLpTokenAccount,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+      })
+      .rpc();
+    console.log(
+      "Claim LP tokens transaction signature: ",
+      getTransactionOnExplorer(claimTx)
+    );
+    const creatorLpTokenAccountInfo =
+      await provider.connection.getTokenAccountBalance(creatorLpTokenAccount);
+    console.log(
+      `Creator LP token account balance: ${creatorLpTokenAccountInfo.value.uiAmount}`
+    );
+  });
+
+  it("Lock lp tokens in Raydium pool", async () => {
+    const lockTx = await program.methods
+      .lockCpmmLiquidity()
+      .accountsPartial({
+        lockCpmmProgram: LOCK_CPMM_PROGRAM_ID,
+        feeNftAcc: creatorNftMintAccount,
+        lockedLpVault: lockedLpVault,
+        ammConfig: AMM_CONFIG_ID,
+        authority: LOCK_CPMM_AUTHORITY_ID,
+        feeNftMint: fee_nft_mint.publicKey,
+        poolState: poolState,
+        lockedLiquidity: lockedLiquidity,
+        lpMint: lp_mint,
+        token0Vault: token_vault_0,
+        token1Vault: token_vault_1,
+        metadata: feeNftMetadataAddress,
+        metadataProgram: new anchor.web3.PublicKey(
+          "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+        ),
+        associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        baseMint: WSOL_ID,
+        tokenMint: mintKey,
+        cpSwapProgram: CPMM_PROGRAM_ID,
+        user: wallet.publicKey,
+        userLpTokenAccount: creatorLpTokenAccount,
+      })
+      .signers([fee_nft_mint])
+      .rpc();
+    console.log(
+      "Lock LP tokens transaction signature: ",
+      getTransactionOnExplorer(lockTx)
+    );
+  });
+
+  it("Claim locked liquidity NFT", async () => {
+    const userTokenAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      wallet.payer,
+      mintKey,
+      wallet.publicKey,
+      true
+    );
+    const userBaseTokenAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      wallet.payer,
+      WSOL_ID,
+      wallet.publicKey,
+      true
+    );
+    const claimTx = await program.methods
+      .harvestLockedCpmmLiquidity()
+      .accountsPartial({
+        lockCpmmProgram: LOCK_CPMM_PROGRAM_ID,
+        ammConfig: AMM_CONFIG_ID,
+        creator: wallet.publicKey,
+        authority: LOCK_CPMM_AUTHORITY_ID,
+        feeNftAccount: creatorNftMintAccount,
+        lockedLiquidity: lockedLiquidity,
+        cpSwapProgram: CPMM_PROGRAM_ID,
+        cpAuthority: authority,
+        poolState,
+        lpMint: lp_mint,
+        baseVault: userBaseTokenAccount.address,
+        tokenVault: userTokenAccount.address,
+        token0Vault: token_vault_0,
+        token1Vault: token_vault_1,
+        baseMint: WSOL_ID,
+        tokenMint: mintKey,
+        lockedLpVault: lockedLpVault,
+        systemProgram: anchor.web3.SystemProgram.programId,
+        memoProgram: MEMO_PROGRAM,
+        token0Program: anchor.utils.token.TOKEN_PROGRAM_ID,
+        token1Program: TOKEN_2022_PROGRAM_ID,
+      })
+      .rpc();
+
+    console.log(
+      "Claim locked liquidity transaction signature: ",
+      getTransactionOnExplorer(claimTx)
+    );
   });
 });
 

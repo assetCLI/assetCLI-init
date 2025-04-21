@@ -36,12 +36,10 @@ pub struct CreateBondingCurveParams {
     pub sol_raise_target: u64,
     pub decimals: Option<u8>,
     pub token_total_supply: Option<u64>,
-    // DaoProposal Metadata
-    pub dao_name: String,
-    pub dao_description: String,
-    pub realm_address: Pubkey,
+    // Proposal Metadata
+    pub description: String,
     pub treasury_address: Pubkey,
-    pub governance_address: Pubkey,
+    pub authority_address: Pubkey,
     pub twitter_handle: Option<String>,
     pub discord_link: Option<String>,
     pub website_url: Option<String>,

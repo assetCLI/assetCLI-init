@@ -5,14 +5,7 @@ use anchor_spl::{
 };
 
 use crate::{
-    errors::ContractError,
-    BondingCurve,
-    BuyResult,
-    DAOProposal,
-    Global,
-    SellResult,
-    TokensPurchased,
-    TokensSold,
+    errors::ContractError, BondingCurve, BuyResult, Global, Proposal, SellResult, TokensPurchased, TokensSold
 };
 
 #[derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)]
@@ -69,13 +62,11 @@ pub struct Swap<'info> {
         associated_token::authority = user
     )]
     pub user_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
-
-    // Add DAO proposal access when needed
     #[account(
-        seeds = [DAOProposal::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
+        seeds = [Proposal::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
         bump
     )]
-    pub dao_proposal: Box<Account<'info, DAOProposal>>,
+    pub proposal: Box<Account<'info, Proposal>>,
 
     pub system_program: Program<'info, System>,
     pub token_program: Interface<'info, TokenInterface>,
@@ -102,6 +93,8 @@ impl<'info> Swap<'info> {
         Ok(())
     }
     pub fn process(&mut self, params: SwapParams) -> Result<()> {
+        require!(self.bonding_curve.is_started(&Clock::get()?), ContractError::CurveNotStarted);
+        require!(!self.bonding_curve.complete, ContractError::BondingCurveComplete);
         let SwapParams { base_in, amount, min_out_amount } = params;
         let bonding_curve = self.bonding_curve.clone();
         let sol_amount: u64;

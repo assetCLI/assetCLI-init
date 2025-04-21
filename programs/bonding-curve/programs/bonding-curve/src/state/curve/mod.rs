@@ -1,4 +1,4 @@
 mod bonding_curve;
-mod dao_proposal;
+mod proposal;
 pub use bonding_curve::*;
-pub use dao_proposal::*;
+pub use proposal::*;

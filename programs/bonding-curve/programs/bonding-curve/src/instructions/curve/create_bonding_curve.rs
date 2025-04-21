@@ -11,13 +11,7 @@ use anchor_spl::{
 };
 
 use crate::{
-    errors::ContractError,
-    BondingCurve,
-    CreateBondingCurveParams,
-    DAOProposal,
-    Global,
-    ProgramStatus,
-    DEFAULT_DECIMALS,
+    errors::ContractError, BondingCurve, CreateBondingCurveParams, Global, ProgramStatus, Proposal, DEFAULT_DECIMALS
 };
 
 #[derive(Accounts)]
@@ -51,7 +45,7 @@ pub struct CreateBondingCurve<'info> {
 
     #[account(
         mut,
-        seeds = [BondingCurve::VAULT_PREFIX.as_bytes(), mint.to_account_info().key().as_ref()],
+        seeds = [BondingCurve::VAULT_PREFIX.as_bytes(), mint.key().as_ref()],
         bump,
     )]
     pub bonding_curve_vault: SystemAccount<'info>,
@@ -59,11 +53,11 @@ pub struct CreateBondingCurve<'info> {
     #[account(
         init,
         payer = creator,
-        seeds = [DAOProposal::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
+        seeds = [Proposal::SEED_PREFIX.as_bytes(), mint.key().as_ref()],
         bump,
-        space = 8 + DAOProposal::INIT_SPACE
+        space = 8 + Proposal::INIT_SPACE
     )]
-    pub dao_proposal: Box<Account<'info, DAOProposal>>,
+    pub proposal: Box<Account<'info, Proposal>>,
 
     #[account(
         init_if_needed,
@@ -100,8 +94,8 @@ impl<'info> CreateBondingCurve<'info> {
     ) -> Result<()> {
         let clock = Clock::get()?;
 
-        // Initialize the DAOProposal
-        self.initialize_dao_proposal(&params, bumps.dao_proposal)?;
+        // Initialize the Proposal
+        self.initialize_proposal(&params, bumps.proposal)?;
 
         // Then update the bonding curve
         self.bonding_curve.update_from_params(
@@ -134,26 +128,24 @@ impl<'info> CreateBondingCurve<'info> {
         Ok(())
     }
 
-    // New method to initialize the DAO proposal
-    fn initialize_dao_proposal(
+    fn initialize_proposal(
         &mut self,
         params: &CreateBondingCurveParams,
         dao_proposal_bump: u8
     ) -> Result<()> {
-        // Initialize DAO proposal with provided parameters
-        self.dao_proposal.set_inner(DAOProposal {
+        // Initialize proposal with provided parameters
+        self.proposal.set_inner(Proposal {
             mint: self.mint.key(),
             creator: *self.creator.key,
-            name: params.dao_name.clone(),
-            description: params.dao_description.clone(),
-            realm_address: params.realm_address.clone(),
+            name: params.name.clone(),
+            description: params.description.clone(),
             twitter_handle: params.twitter_handle.clone(),
             treasury_address: params.treasury_address.clone(),
             discord_link: params.discord_link.clone(),
             website_url: params.website_url.clone(),
+            authority_address: params.authority_address.clone(),
             logo_uri: params.logo_uri.clone(),
             founder_name: params.founder_name.clone(),
-            governance_address: params.governance_address.clone(),
             founder_twitter: params.founder_twitter.clone(),
             bullish_thesis: params.bullish_thesis.clone(),
             bump: dao_proposal_bump,

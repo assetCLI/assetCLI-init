@@ -45,27 +45,6 @@ pub enum ContractError {
     #[msg("Curve Not Started")]
     CurveNotStarted,
 
-    #[msg("Start time is in the past")]
-    InvalidStartTime,
-
-    #[msg("Whitelist is already initialized")]
-    WlInitializeFailed,
-
-    #[msg("Whitelist is not initialized")]
-    WlNotInitializeFailed,
-
-    #[msg("This creator already in whitelist")]
-    AddFailed,
-
-    #[msg("This creator is not in whitelist")]
-    RemoveFailed,
-
-    #[msg("The WL account is not initialized")]
-    WlNotInitialized,
-
-    #[msg("This creator is not in whitelist")]
-    NotWhiteList,
-
     #[msg("Bonding curve is not completed")]
     NotCompleted,
 
@@ -96,9 +75,9 @@ pub enum ContractError {
     #[msg("SOL raise target already reached")]
     RaiseTargetReached,
 
-    #[msg("Invalid realm account")]
-    InvalidRealmAccount,
-
     #[msg("Invalid treasury address")]
     InvalidTreasury,
+
+    #[msg("Invalid proposal authority")]
+    InvalidProposalAuthority,
 }

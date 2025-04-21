@@ -34,4 +34,20 @@ pub mod bonding_curve {
     pub fn create_raydium_pool(ctx: Context<CreateRaydiumPool>) -> Result<()> {
         ctx.accounts.process()
     }
+
+    pub fn claim_creator_lp(ctx: Context<ClaimCreatorLp>) -> Result<()> {
+        ctx.accounts.process()
+    }
+    
+    pub fn lock_cpmm_liquidity(
+        ctx: Context<LockCpmmLiquidity>,
+    ) -> Result<()> {
+        ctx.accounts.process()
+    }
+
+    pub fn harvest_locked_cpmm_liquidity(
+        ctx: Context<HarvestLockedLiquidity>,
+    ) -> Result<()> {
+        ctx.accounts.process()
+    }
 }

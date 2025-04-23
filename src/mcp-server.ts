@@ -16,14 +16,9 @@ const server = new McpServer({
   name: "AssetCLI",
   version: "0.0.1",
 });
-
 registerConfigAndWalletTools(server);
-registerDaoTools(server);
-registerProposalTools(server);
-registerResource(server);
-registerMultisigTools(server);
-// registerTestTokenTools(server);
 registerBondingCurveTools(server);
+registerResource(server);
 // Get Balance
 server.tool(
   "getBalance",

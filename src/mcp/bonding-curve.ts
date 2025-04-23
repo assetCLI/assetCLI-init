@@ -1,496 +1,80 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { ConfigService } from "../services/config-service";
-import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import { BN } from "@coral-xyz/anchor";
+import { useMcpContext, mcpError, mcpText } from "../utils/mcp-hooks";
 import { BondingCurveService } from "../services/bonding-curve-service";
-import { useMcpContext } from "../utils/mcp-hooks";
-import { BN, Idl, Wallet } from "@coral-xyz/anchor";
-import * as IDL from "../../idls/bonding_curve.json";
-import { GovernanceService } from "../services/governance-service";
+import * as anchor from "@coral-xyz/anchor";
+import IDL from "../../idls/bonding_curve.json";
+import { z } from "zod";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 
-// Standalone Bonding Curve Tool
+async function getBondingCurveService() {
+  const context = await useMcpContext({ requireWallet: true });
+  if (!context.success) {
+    return {
+      success: false,
+      error: context.error,
+      suggestion: context.suggestion,
+    };
+  }
+  try {
+    // Create bonding curve service
+    const wallet = new anchor.Wallet(context.keypair);
+    const service = new BondingCurveService(
+      context.connection,
+      wallet,
+      "confirmed",
+      IDL as anchor.Idl
+    );
+    return { success: true, service, wallet };
+  } catch (error) {
+    return {
+      success: false,
+      error: `Failed to initialize bonding curve service: ${error}`,
+      suggestion: "Make sure the bonding curve IDL is available",
+    };
+  }
+}
+
 export function registerBondingCurveTools(server: McpServer) {
-  // Get global settings of the bonding curve
-  server.tool(
-    "getBondingCurveGlobalInfo",
-    "Get global info of the bonding curve protocol",
-    {},
-    async () => {
-      try {
-        const context = await useMcpContext({ requireWallet: true });
-        if (!context.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `${context.error}\n\nSuggestion: ${
-                  context.suggestion ||
-                  "Create a wallet with 'createWallet' first"
-                }`,
-              },
-            ],
-          };
-        }
-
-        const { connection, keypair } = context;
-        const bondingCurveService = new BondingCurveService(
-          connection,
-          new Wallet(keypair),
-          "confirmed",
-          IDL as Idl
-        );
-
-        const globalState = await bondingCurveService.getGlobalSettings();
-
-        if (!globalState.success || !globalState.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to get global settings: ${globalState.error?.message}`,
-              },
-            ],
-          };
-        }
-
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                "Global bonding curve settings:\n" +
-                JSON.stringify(globalState.data, null, 2),
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to get global settings: ${error}`,
-            },
-          ],
-        };
-      }
-    }
-  );
-
-  // Launch a new token on the bonding curve
-  server.tool(
-    "launchToken",
-    "Create a new token/dao-token on the bonding curve",
-    {
-      name: z.string(),
-      symbol: z.string(),
-      svg: z.string().optional(),
-      solRaiseTarget: z.number(),
-      description: z.string().optional(),
-      twitterHandle: z.string().optional(),
-      bullishThesis: z.string().optional(),
-    },
-    async (options) => {
-      try {
-        const context = await useMcpContext({ requireWallet: true });
-        if (!context.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `${context.error}\n\nSuggestion: ${
-                  context.suggestion ||
-                  "Create a wallet with 'createWallet' first"
-                }`,
-              },
-            ],
-          };
-        }
-        // Check if SVG was provided and convert it to Buffer
-        let svgBuffer: Buffer | undefined;
-        if (options.svg) {
-          try {
-            // Convert the svg string to Buffer
-            svgBuffer = Buffer.from(options.svg);
-          } catch (error) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Failed to process SVG: ${error}`,
-                },
-              ],
-            };
-          }
-        }
-        const { connection, keypair } = context;
-        const bondingCurveService = new BondingCurveService(
-          connection,
-          new Wallet(keypair),
-          "confirmed",
-          IDL as Idl
-        );
-
-        const daoNamespace = `assetCLI-${options.name}-${options.symbol}`;
-        const realmAddress = GovernanceService.getRealmPublicKeyFromName(
-          connection,
-          daoNamespace
-        );
-        // Check if the DAO already exists
-        const realmExists = await GovernanceService.getRealmInfo(
-          connection,
-          realmAddress
-        );
-        if (realmExists.success && realmExists.data) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: `The realm already exists, try a different name/symbol : ${realmExists.data.realmAddress}`,
-              },
-            ],
-          };
-        }
-        // Convert SOL to lamports for solRaiseTarget
-        const solRaiseTarget = new BN(
-          options.solRaiseTarget * LAMPORTS_PER_SOL
-        );
-
-        // Create the bonding curve
-        const tx = await bondingCurveService.createBondingCurve({
-          name: options.name,
-          symbol: options.symbol,
-          solRaiseTarget: solRaiseTarget,
-          daoName: options.name,
-          buff: svgBuffer || Buffer.from(""),
-          daoDescription:
-            options.description ||
-            `A realm created for ${options.name} using AssetCLI`,
-          realmAddress,
-          twitterHandle: options.twitterHandle,
-          bullishThesis: options.bullishThesis || "Bullish thesis",
-        });
-
-        if (tx.success && tx.data) {
-          // Means the transaction was successful
-          // Create the realm namespace dao now
-          const realmCreationRes =
-            await GovernanceService.initializeNamespaceDao(
-              connection,
-              keypair,
-              daoNamespace,
-              bondingCurveService.findMintAddress(
-                options.name,
-                keypair.publicKey
-              ),
-              [keypair.publicKey]
-            );
-          if (!realmCreationRes.success || !realmCreationRes.data)
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Failed to create DAO: ${realmCreationRes.error}`,
-                },
-              ],
-            };
-
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  "Token created successfully on bonding curve!\n\n" +
-                  `Transaction signature: ${tx.data.tx}\n` +
-                  `Mint address: ${tx.data.mintAddress}\n` +
-                  `Realm Address: ${realmCreationRes.data.realmAddress}\n\n` +
-                  "What's next?\n" +
-                  "1. Share the mint address with others who want to participate\n" +
-                  "2. Use 'swapTokens' to buy or sell tokens\n" +
-                  "3. Use 'getBondingCurveInfo' to check the current curve status",
-              },
-            ],
-          };
-        }
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to create bonding curve token: ${tx.error?.message}`,
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to create bonding curve token: ${error}`,
-            },
-          ],
-        };
-      }
-    }
-  );
-
-  // Swap tokens (buy or sell)
-  server.tool(
-    "swapTokens",
-    "Buy or sell tokens using the bonding curve",
-    {
-      mint: z.string(),
-      direction: z.enum(["buy", "sell"]),
-      amount: z.number(),
-      minOut: z.number().optional(),
-    },
-    async (options) => {
-      try {
-        const context = await useMcpContext({ requireWallet: true });
-        if (!context.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `${context.error}\n\nSuggestion: ${
-                  context.suggestion ||
-                  "Create a wallet with 'createWallet' first"
-                }`,
-              },
-            ],
-          };
-        }
-
-        const { connection, keypair } = context;
-        const bondingCurveService = new BondingCurveService(
-          connection,
-          new Wallet(keypair),
-          "confirmed",
-          IDL as Idl
-        );
-
-        // Parse mint address
-        let mintPubkey;
-        try {
-          mintPubkey = new PublicKey(options.mint);
-        } catch (e) {
-          return {
-            content: [{ type: "text", text: "Invalid mint address." }],
-          };
-        }
-
-        // Convert parameters to correct format
-        const isBaseIn = options.direction === "buy";
-        const amount = new BN(options.amount * LAMPORTS_PER_SOL);
-        const minOut = options.minOut
-          ? new BN(options.minOut * LAMPORTS_PER_SOL)
-          : new BN(0);
-
-        // Get current bonding curve data for reference
-        const beforeData = await bondingCurveService.getBondingCurve(
-          mintPubkey
-        );
-
-        // Execute the swap
-        const tx = await bondingCurveService.swap(mintPubkey, {
-          baseIn: isBaseIn,
-          amount: amount,
-          minOutAmount: minOut,
-        });
-
-        if (!tx.success || !tx.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Swap failed: ${tx.error?.message || tx.error}`,
-              },
-            ],
-          };
-        }
-
-        // Get updated data
-        const afterData = await bondingCurveService.getBondingCurve(mintPubkey);
-
-        // Format for display
-        let beforeReserves, afterReserves;
-        if (beforeData.success && afterData.success) {
-          beforeReserves = {
-            tokens: beforeData.data.realTokenReserves
-              .div(new BN(1_000_000))
-              .toString(),
-            sol: beforeData.data.realSolReserves
-              .div(new BN(LAMPORTS_PER_SOL))
-              .toString(),
-          };
-
-          afterReserves = {
-            tokens: afterData.data.realTokenReserves
-              .div(new BN(1_000_000))
-              .toString(),
-            sol: afterData.data.realSolReserves
-              .div(new BN(LAMPORTS_PER_SOL))
-              .toString(),
-          };
-        }
-
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                `${options.direction.toUpperCase()} executed successfully!\n\n` +
-                `Transaction signature: ${tx.data}\n\n` +
-                "Bonding curve reserves change:\n" +
-                `BEFORE - SOL: ${beforeReserves?.sol || "N/A"}, Tokens: ${
-                  beforeReserves?.tokens || "N/A"
-                }\n` +
-                `AFTER  - SOL: ${afterReserves?.sol || "N/A"}, Tokens: ${
-                  afterReserves?.tokens || "N/A"
-                }`,
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to execute swap: ${error}`,
-            },
-          ],
-        };
-      }
-    }
-  );
-
-  // Get bonding curve information
-  server.tool(
-    "getBondingCurveInfo",
-    "Get information about a specific bonding curve",
-    {
-      mint: z.string(),
-    },
-    async (options) => {
-      try {
-        const context = await useMcpContext({ requireWallet: true });
-        if (!context.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `${context.error}\n\nSuggestion: ${
-                  context.suggestion ||
-                  "Create a wallet with 'createWallet' first"
-                }`,
-              },
-            ],
-          };
-        }
-
-        const { connection, keypair } = context;
-        const bondingCurveService = new BondingCurveService(
-          connection,
-          new Wallet(keypair),
-          "confirmed",
-          IDL as Idl
-        );
-
-        // Parse mint address
-        let mintPubkey;
-        try {
-          mintPubkey = new PublicKey(options.mint);
-        } catch (e) {
-          return {
-            content: [{ type: "text", text: "Invalid mint address." }],
-          };
-        }
-
-        // Get bonding curve data
-        const bondingCurveData = await bondingCurveService.getBondingCurve(
-          mintPubkey
-        );
-
-        if (!bondingCurveData.success || !bondingCurveData.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to get bonding curve data: ${bondingCurveData.error?.message}`,
-              },
-            ],
-          };
-        }
-
-        // Get DAO proposal data if available
-        const daoProposalData = await bondingCurveService.getDaoProposal(
-          mintPubkey
-        );
-
-        // Format the data for display
-        const data = bondingCurveData.data;
-        const formattedData = {
-          mint: mintPubkey.toBase58(),
-          name: data.name,
-          symbol: data.symbol,
-          tokenDecimals: data.tokenDecimals,
-          realTokenReserves: data.realTokenReserves.toNumber(),
-          realSolReserves: data.realSolReserves.toNumber(),
-          virtualTokenReserves: data.virtualTokenReserves.toNumber(),
-          virtualSolReserves: data.virtualSolReserves.toNumber(),
-          solRaiseTarget: data.solRaiseTarget.toNumber(),
-          creator: data.creator.toBase58(),
-        };
-
-        // Add DAO proposal data if available
-        let daoProposalInfo = "";
-        if (daoProposalData.success && daoProposalData.data) {
-          daoProposalInfo =
-            "\n\nDAO Proposal Info:\n" +
-            JSON.stringify(daoProposalData.data, null, 2);
-        }
-
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                "Bonding Curve Info:\n" +
-                JSON.stringify(formattedData, null, 2) +
-                daoProposalInfo +
-                "\n\nAvailable actions:\n" +
-                "1. Buy tokens with 'swapTokens' direction='buy'\n" +
-                "2. Sell tokens with 'swapTokens' direction='sell'",
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to get bonding curve info: ${error}`,
-            },
-          ],
-        };
-      }
-    }
-  );
+  bondingCurveTools.forEach((tool) => {
+    server.tool(tool.name, tool.description, tool.schema, tool.func);
+  });
 
   server.prompt(
-    "getPriceInfo",
-    "Get price for the given mint address",
+    "buy-sell-tokens",
+    "Buy or sell tokens on bonding curve",
     {
-      mint: z.string(),
+      mintAddress: z.string().describe("Address of token mint"),
+      isBuy: z
+        .string()
+        .describe("Type 'true' to buy tokens or 'false' to sell"),
+      amount: z.string().describe("Amount to swap"),
+      slippagePercent: z
+        .string()
+        .optional()
+        .describe("Slippage tolerance percentage (e.g. 1 for 1%)"),
     },
-    async ({ mint }) => {
+    ({ mintAddress, isBuy, amount, slippagePercent }) => {
+      const isBuyBoolean = isBuy.toLowerCase() === "true";
+      const amountNumber = parseFloat(amount);
+      const slippageNumber = slippagePercent
+        ? parseFloat(slippagePercent)
+        : 0.5;
+
       return {
         messages: [
           {
             role: "user",
             content: {
               type: "text",
-              text: `Get price for the given mint address ${mint}, by looking up the bonding curve info for the mint address and calculating the price based on the reserves and the amount of tokens in circulation.`,
+              text: `First simulate the swap using the \`simulateSwap\` command with: mintAddress "${mintAddress}" isBuy ${isBuyBoolean} amount ${amountNumber} slippagePercent ${slippageNumber}, ask for permission to proceed with the swap, and then execute the swap using the \`swap\` tool with: mintAddress "${mintAddress}" isBuy ${isBuyBoolean} amount ${amountNumber} slippagePercent ${slippageNumber}`,
+            },
+          },
+          {
+            role: "assistant",
+            content: {
+              type: "text",
+              text: `To execute the swap, use the \`swap\` command with: mintAddress "${mintAddress}" isBuy ${isBuyBoolean} amount ${amountNumber} slippagePercent ${slippageNumber}`,
             },
           },
         ],
@@ -499,207 +83,686 @@ export function registerBondingCurveTools(server: McpServer) {
   );
 
   server.prompt(
-    "getAllTokensOnCurve",
-    "Tokens available for sale on the curve",
-    {},
-    async ({}) => {
-      const context = await useMcpContext({ requireWallet: true });
-      if (!context.success) {
-        return {
-          messages: [
-            {
-              role: "user",
-              content: {
-                type: "text",
-                text: `${context.error}\n\nSuggestion: ${
-                  context.suggestion ||
-                  "Create a wallet with 'createWallet' first"
-                }`,
-              },
-            },
-          ],
-        };
-      }
-
-      const { connection, keypair } = context;
-      const bondingCurveService = new BondingCurveService(
-        connection,
-        {
-          publicKey: keypair.publicKey,
-          signTransaction: async (tx) => tx,
-          signAllTransactions: async (txs) => txs,
-          payer: keypair,
-        },
-        "confirmed",
-        IDL as Idl
-      );
-
-      const allTokens = await bondingCurveService.getTokensOnCurve();
-      if (!allTokens.success || !allTokens.data) {
-        return {
-          messages: [
-            {
-              role: "user",
-              content: {
-                type: "text",
-                text: `Failed to get tokens on curve: ${allTokens.error?.message}`,
-              },
-            },
-          ],
-        };
-      }
+    "migrate-to-raydium",
+    "Migrate token from bonding curve to Raydium pool",
+    {
+      mintAddress: z.string().describe("Address of token mint"),
+    },
+    ({ mintAddress }) => {
       return {
         messages: [
           {
             role: "user",
             content: {
               type: "text",
-              text: `Tokens available for sale on the curve: ${JSON.stringify(
-                allTokens.data,
-                null,
-                2
-              )}\n
-              \n Availabale Actions:\n 
-              1. Buy tokens with 'swapTokens' direction='buy'\n
-              2. Sell tokens with 'swapTokens' direction='sell',
-              `,
+              text: `First check if the bonding curve is complete using the \`getBondingCurveDetails\` tool with mint address "${mintAddress}", then migrate the token to Raydium using the \`migrateToRaydium\` tool with: mintAddress "${mintAddress}"`,
             },
           },
         ],
       };
-    }
-  );
-
-  server.tool(
-    "getTokenHoldings",
-    "Get token holdings of the wallet address",
-    {},
-    async ({}) => {
-      const context = await useMcpContext({ requireWallet: true });
-      if (!context.success) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `${context.error}\n\nSuggestion: ${
-                context.suggestion ||
-                "Create a wallet with 'createWallet' first"
-              }`,
-            },
-          ],
-        };
-      }
-
-      const { connection, keypair } = context;
-      try {
-        // Get token accounts owned by the user
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-          keypair.publicKey,
-          {
-            programId: new PublicKey(
-              "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-            ),
-          }
-        );
-
-        if (!tokenAccounts || tokenAccounts.value.length === 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "No token holdings found for this wallet.",
-              },
-            ],
-          };
-        }
-
-        // Get the bonding curve service
-        const bondingCurveService = new BondingCurveService(
-          connection,
-          new Wallet(keypair),
-          "confirmed",
-          IDL as Idl
-        );
-
-        // Get all tokens on curve for reference
-        const curveTokensResponse =
-          await bondingCurveService.getTokensOnCurve();
-        const curveTokensMap = new Map();
-
-        if (curveTokensResponse.success && curveTokensResponse.data) {
-          curveTokensResponse.data.forEach((token) => {
-            curveTokensMap.set(token.mintAddress, {
-              name: token.daoProposal.name,
-              symbol: token,
-            });
-          });
-        }
-
-        // Process token accounts
-        const bondingCurveHoldings = [];
-        const otherTokens = [];
-
-        for (const account of tokenAccounts.value) {
-          const parsedInfo = account.account.data.parsed.info;
-          const tokenAmount = parsedInfo.tokenAmount;
-          const mintAddress = parsedInfo.mint;
-
-          // Skip tokens with zero balance
-          if (tokenAmount.uiAmount <= 0) {
-            continue;
-          }
-
-          const tokenInfo = curveTokensMap.get(mintAddress);
-          const tokenData = {
-            mint: mintAddress,
-            tokenAccount: account.pubkey.toString(),
-            amount: tokenAmount.uiAmount,
-            decimals: tokenAmount.decimals,
-            name: tokenInfo?.name || "Unknown",
-            symbol: tokenInfo?.symbol || "UNKNOWN",
-          };
-
-          if (tokenInfo) {
-            bondingCurveHoldings.push(tokenData);
-          } else {
-            otherTokens.push(tokenData);
-          }
-        }
-
-        // Sort by amount
-        bondingCurveHoldings.sort((a, b) => b.amount - a.amount);
-        otherTokens.sort((a, b) => b.amount - a.amount);
-
-        const allHoldings = {
-          bondingCurveTokens: bondingCurveHoldings,
-          otherTokens: otherTokens,
-        };
-
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                bondingCurveHoldings.length > 0 || otherTokens.length > 0
-                  ? `Token Holdings:\n${JSON.stringify(
-                      allHoldings,
-                      null,
-                      2
-                    )}\n\nAvailable actions:\n1. Use 'swapTokens' to sell bonding curve tokens back to the curve\n2. Use 'getBondingCurveInfo' to check curve status for bonding curve tokens`
-                  : "No tokens with non-zero balances found for this wallet.",
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to get token holdings: ${error}`,
-            },
-          ],
-        };
-      }
     }
   );
 }
+
+// Function to handle buffer from base64 string (for image uploads)
+function decodeBase64Image(base64String: string): Buffer {
+  // Remove data URL prefix if present
+  const base64Data = base64String.replace(/^data:image\/\w+;base64,/, "");
+  return Buffer.from(base64Data, "base64");
+}
+
+export const bondingCurveTools = [
+  {
+    name: "initializeBondingCurve",
+    description: "Initialize the bonding curve protocol",
+    schema: {
+      feeReceiver: z
+        .string()
+        .optional()
+        .describe("Public key of the fee receiver (optional)"),
+      migrateFeeAmount: z
+        .number()
+        .optional()
+        .describe("Fee amount for migrations (optional)"),
+    },
+    async func(args: {
+      feeReceiver?: string | undefined;
+      migrateFeeAmount?: number | undefined;
+    }) {
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service) {
+        return mcpError(result.error!, result.suggestion);
+      }
+      const { feeReceiver, migrateFeeAmount } = args;
+      const { service } = result;
+
+      const initParams = {
+        feeReceiver: feeReceiver ? new PublicKey(feeReceiver) : undefined,
+        migrateFeeAmount: migrateFeeAmount
+          ? new BN(migrateFeeAmount)
+          : undefined,
+        status: { running: {} },
+      };
+
+      const initResult = await service.initialize(initParams);
+
+      if (!initResult.success) {
+        return mcpError(
+          `Failed to initialize bonding curve: ${initResult.error?.message}`,
+          "Check your connection and wallet"
+        );
+      }
+
+      return mcpText(
+        `Successfully initialized bonding curve protocol!\nTransaction: ${initResult.data}`
+      );
+    },
+  },
+  {
+    name: "createBondingCurve",
+    description:
+      "Create a new token on a linear bonding curve with a sol raise target",
+    schema: {
+      name: z.string().describe("Token name"),
+      symbol: z.string().describe("Token symbol"),
+      description: z.string().describe("Token description"),
+      solRaiseTarget: z
+        .number()
+        .describe("Sol raise target in SOL(not in lamports)"),
+      image: z.string().describe("Base64 encoded image data"),
+      decimals: z.number().default(9).describe("Token decimals"),
+      totalSupply: z.number().describe("Total token supply"),
+      twitterHandle: z
+        .string()
+        .optional()
+        .describe("Twitter handle (optional)"),
+      discordLink: z.string().optional().describe("Discord link (optional)"),
+      websiteUrl: z.string().optional().describe("Website URL (optional)"),
+      founderName: z.string().optional().describe("Founder name (optional)"),
+      founderTwitter: z
+        .string()
+        .optional()
+        .describe("Founder Twitter handle (optional)"),
+      bullishThesis: z
+        .string()
+        .optional()
+        .describe("Bullish thesis for token (optional)"),
+    },
+    async func(args: {
+      name: string;
+      symbol: string;
+      description: string;
+      solRaiseTarget: number;
+      image: string;
+      decimals?: number | undefined;
+      totalSupply: number;
+      twitterHandle?: string | undefined;
+      discordLink?: string | undefined;
+      websiteUrl?: string | undefined;
+      founderName?: string | undefined;
+      founderTwitter?: string | undefined;
+      bullishThesis?: string | undefined;
+    }) {
+      const {
+        name,
+        symbol,
+        description,
+        solRaiseTarget,
+        image,
+        decimals = 9,
+        totalSupply,
+        twitterHandle,
+        discordLink,
+        websiteUrl,
+        founderName,
+        founderTwitter,
+        bullishThesis,
+      } = args;
+
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service || !result.wallet) {
+        return mcpError(result.error!, result.suggestion);
+      }
+
+      const { service, wallet } = result;
+
+      // Handle image if provided
+      let imageBuffer;
+      if (image) {
+        try {
+          imageBuffer = decodeBase64Image(image);
+        } catch (error) {
+          return mcpError(
+            `Failed to decode image: ${error}`,
+            "Provide a valid base64 encoded image"
+          );
+        }
+      }
+
+      const createParams = {
+        name,
+        symbol,
+        description,
+        solRaiseTarget: new BN(solRaiseTarget),
+        buff: imageBuffer,
+        mintDecimals: decimals,
+        tokenTotalSupply: new BN(totalSupply),
+        treasuryAddress: wallet.publicKey,
+        authorityAddress: wallet.publicKey,
+        twitterHandle,
+        discordLink,
+        websiteUrl,
+        logoUri: undefined,
+        founderName,
+        founderTwitter,
+        bullishThesis,
+      };
+
+      const createResult = await service.createBondingCurve(createParams);
+
+      if (!createResult.success || !createResult.data) {
+        return mcpError(
+          `Failed to create bonding curve: ${createResult.error?.message}`,
+          "Check your input parameters and try again"
+        );
+      }
+
+      return mcpText(
+        `✅ Successfully created token with bonding curve!\n\nToken: ${name} (${symbol})\nMint Address: ${createResult.data.mintAddress}\nTransaction: ${createResult.data.tx}`
+      );
+    },
+  },
+  {
+    name: "swap",
+    description: "Swap between SOL and tokens using the bonding curve",
+    schema: {
+      mintAddress: z.string().describe("Address of token mint"),
+      isBuy: z
+        .boolean()
+        .describe("True to buy tokens with SOL, False to sell tokens for SOL"),
+      amount: z
+        .number()
+        .describe("Amount to swap (in SOL if buying, in tokens if selling)"),
+      mintOutAmount: z
+        .number()
+        .describe(
+          "Minimum output amount (provided in tokens if buying, in SOL if selling) (provided from simulateSwap)"
+        ),
+    },
+    async func(args: {
+      mintAddress: string;
+      isBuy: boolean;
+      amount: number;
+      mintOutAmount: number;
+    }) {
+      const { mintAddress, isBuy, amount, mintOutAmount } = args;
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service) {
+        return mcpError(result.error!, result.suggestion);
+      }
+
+      const { service } = result;
+      let mint = new PublicKey(mintAddress);
+      const curveResult = await service.getBondingCurve(mint);
+      if (!curveResult.success) {
+        return mcpError(
+          `Failed to get bonding curve data: ${curveResult.error?.message}`,
+          "Check your mint address"
+        );
+      }
+      const swapParams = {
+        baseIn: !isBuy,
+        amount: new BN(amount),
+        minOutAmount: new BN(mintOutAmount),
+      };
+
+      const swapResult = await service.swap(mint, swapParams);
+
+      if (!swapResult.success) {
+        return mcpError(
+          `Swap failed: ${swapResult.error?.message}`,
+          "Check your balance and try again"
+        );
+      }
+
+      const actionText = isBuy ? "bought tokens" : "sold tokens";
+      return mcpText(
+        `Successfully ${actionText}!\nTransaction: ${swapResult.data}`
+      );
+    },
+  },
+  {
+    name: "listBondingCurves",
+    description: "List all bonding curves and tokens",
+    schema: {},
+    async func() {
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service) {
+        return mcpError(result.error!, result.suggestion);
+      }
+
+      const { service } = result;
+
+      const listResult = await service.fetchAllTokensAndProposalsOnCurve();
+
+      if (
+        !listResult.success ||
+        !listResult.data ||
+        listResult.data.length === 0
+      ) {
+        return mcpText("No bonding curves found.");
+      }
+
+      const formattedText = listResult.data
+        .map((item, index) => {
+          const curve = item.bondingCurve;
+          const proposal = item.proposal;
+          const metadata = item.metadata;
+
+          return `${index + 1}. ${proposal.name}
+   Metadata: ${JSON.stringify(metadata, null, 0)}
+   Name: ${proposal?.name || "N/A"}
+   Description: ${proposal?.description || "N/A"}
+   Website: ${proposal?.websiteUrl || "N/A"}
+   Twitter: ${proposal?.twitterHandle || "N/A"}
+   Discord: ${proposal?.discordLink || "N/A"}
+
+   Founder: ${proposal?.founderName || "N/A"} ${
+            proposal?.founderTwitter ? `(@${proposal.founderTwitter})` : ""
+          }
+    Bullish Thesis: ${proposal?.bullishThesis || "N/A"}
+    Authority Address: ${proposal.authorityAddress.toBase58()}
+    Token Decimals: ${curve.tokenDecimals}
+    Total Supply: ${curve.tokenTotalSupply
+      .div(new BN(10 ** curve.tokenDecimals))
+      .toString()}
+    Sol Raise Target: ${curve.solRaiseTarget
+      .div(new BN(LAMPORTS_PER_SOL))
+      .toString()} SOL
+    Token Address: ${curve.mint.toBase58()}
+    Treasury Address: ${proposal.treasuryAddress.toBase58()}
+    URI: ${metadata?.uri || proposal?.logoUri || "N/A"}
+  `;
+        })
+        .join("\n");
+
+      return mcpText(
+        `Found ${listResult.data.length} bonding curves:\n\n${formattedText}`
+      );
+    },
+  },
+  {
+    name: "getBondingCurveDetails",
+    description: "Get detailed information about a bonding curve token",
+    schema: {
+      mintAddress: z.string().describe("Address of token mint"),
+    },
+    async func(args: { mintAddress: string }) {
+      const { mintAddress } = args;
+
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service) {
+        return mcpError(result.error!, result.suggestion);
+      }
+
+      const { service } = result;
+
+      let mint = new PublicKey(mintAddress);
+
+      const [curveResult, proposalResult, metadataResult] = await Promise.all([
+        service.getBondingCurve(mint),
+        service.getProposal(mint),
+        service.getMetadata(mint),
+      ]);
+
+      if (!curveResult.success) {
+        return mcpError(
+          `Failed to get bonding curve data: ${curveResult.error?.message}`,
+          "Check your mint address"
+        );
+      }
+
+      const curve = curveResult.data;
+      const proposal = proposalResult.success ? proposalResult.data : null;
+      const metadata = metadataResult.success ? metadataResult.data : null;
+
+      return mcpText(`📊 Bonding Curve Details: ${proposal?.name} 
+
+  🔨 Metadata: ${JSON.stringify(metadata, null, 0)}
+  🔑 Mint Address: ${mint.toString()}
+  🪙 Token Details:
+    - Decimals: ${curve?.tokenDecimals}
+    - Total Supply: ${curve?.tokenTotalSupply
+      .div(new BN(10 ** curve.tokenDecimals))
+      .toString()}
+    - URI: ${metadata?.uri || proposal?.logoUri || "N/A"}
+
+  💰 Financials:
+    - SOL Raise Target: ${
+      curve?.solRaiseTarget
+        ? curve.solRaiseTarget.toNumber() / 1_000_000_000 + " SOL"
+        : "N/A"
+    }
+
+  🧑‍💼 Contacts:
+    - Website: ${proposal?.websiteUrl || "N/A"}
+    - Twitter: ${proposal?.twitterHandle || "N/A"}
+    - Discord: ${proposal?.discordLink || "N/A"}
+    - Founder: ${proposal?.founderName || "N/A"} ${
+        proposal?.founderTwitter ? `(@${proposal.founderTwitter})` : ""
+      }
+
+  📝 Additional Info:
+    - Description: ${proposal?.description || "N/A"}
+    - Thesis: ${proposal?.bullishThesis || "N/A"}
+  `);
+    },
+  },
+  {
+    name: "simulateSwap",
+    description: "Simulate a token swap without executing the transaction",
+    schema: {
+      mintAddress: z.string().describe("Address of token mint"),
+      isBuy: z
+        .boolean()
+        .describe("True to buy tokens with SOL, False to sell tokens for SOL"),
+      amount: z
+        .number()
+        .describe("Amount to swap (in SOL if buying, in tokens if selling)"),
+      slippagePercent: z
+        .number()
+        .optional()
+        .default(0.5)
+        .describe("Slippage tolerance percentage (default 0.5%)"),
+    },
+    async func(args: {
+      mintAddress: string;
+      isBuy: boolean;
+      amount: number;
+      slippagePercent?: number;
+    }) {
+      const { mintAddress, isBuy, amount, slippagePercent = 0.5 } = args;
+
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service) {
+        return mcpError(result.error!, result.suggestion);
+      }
+
+      const { service } = result;
+      const mint = new PublicKey(mintAddress);
+
+      try {
+        // Get token name for display
+        const proposalResult = await service.getProposal(mint);
+        const tokenName = proposalResult.success
+          ? proposalResult.data?.name
+          : mintAddress;
+        if (isBuy) {
+          // Convert SOL amount to lamports
+          const amountBN = new BN(amount * LAMPORTS_PER_SOL);
+
+          // Simulate buy
+          const simulationResult = await service.simulateBuy(
+            mint,
+            amountBN,
+            slippagePercent
+          );
+
+          if (!simulationResult.success) {
+            return mcpError(
+              `Failed to simulate buy: ${simulationResult.error?.message}`,
+              "Check your inputs and try again"
+            );
+          }
+
+          // Format the results for display
+          const sim = simulationResult.data!;
+          const tokenDecimalsFactor = Math.pow(10, sim.tokenDecimals);
+          const expectedTokenAmount = sim.expectedTokenAmount
+            .div(new BN(tokenDecimalsFactor))
+            .toNumber();
+          const minTokenAmount = sim.minTokenAmount
+            .div(new BN(tokenDecimalsFactor))
+            .toNumber();
+          const feeInSol = sim.fee.div(new BN(LAMPORTS_PER_SOL)).toNumber();
+          const netSolCost = amount - feeInSol;
+
+          // Format completion status
+          const completionStatus = sim.willComplete
+            ? "⚠️ This purchase will complete the bonding curve!"
+            : "This purchase will not complete the bonding curve.";
+
+          return mcpText(`🔮 Buy Simulation for ${tokenName}
+
+💰 Input: ${amount} SOL
+🪙 Expected output: ${expectedTokenAmount.toFixed(6)} tokens
+🪙 Minimum output (with ${slippagePercent}% slippage): ${minTokenAmount.toFixed(
+            6
+          )} tokens
+💸 Fee: ${feeInSol.toFixed(6)} SOL
+💸 Net cost: ${netSolCost.toFixed(6)} SOL
+📊 Price impact: ${sim.priceImpact.toFixed(2)}%
+💱 Price per token: ${sim.pricePerToken.toFixed(6)} SOL
+${completionStatus}
+
+To execute this swap, use the \`swap\` tool with:
+  --mintAddress "${mintAddress}" --isBuy true --amount ${amount} --slippagePercent ${slippagePercent}`);
+        } else {
+          // Convert token amount to smallest unit
+          const curveResult = await service.getBondingCurve(mint);
+          if (!curveResult.success) {
+            return mcpError(
+              `Failed to get bonding curve: ${curveResult.error?.message}`,
+              "Check the mint address and try again"
+            );
+          }
+
+          const tokenDecimalsFactor = Math.pow(
+            10,
+            curveResult.data?.tokenDecimals!
+          );
+          const amountBN = new BN(amount * tokenDecimalsFactor);
+
+          // Simulate sell
+          const simulationResult = await service.simulateSell(
+            mint,
+            amountBN,
+            slippagePercent
+          );
+
+          if (!simulationResult.success) {
+            return mcpError(
+              `Failed to simulate sell: ${simulationResult.error?.message}`,
+              "Check your inputs and try again"
+            );
+          }
+
+          // Format the results for display
+          const sim = simulationResult.data!;
+          const expectedSolAmount = sim.expectedSolAmount
+            .div(new BN(LAMPORTS_PER_SOL))
+            .toNumber();
+          const minSolAmount = sim.minSolAmount
+            .div(new BN(LAMPORTS_PER_SOL))
+            .toNumber();
+          const feeInSol = sim.fee.div(new BN(LAMPORTS_PER_SOL)).toNumber();
+          const netSolReceived = expectedSolAmount - feeInSol;
+
+          return mcpText(`🔮 Sell Simulation for ${tokenName}
+
+🪙 Input: ${amount} tokens
+💰 Expected output: ${expectedSolAmount.toFixed(6)} SOL
+💰 Minimum output (with ${slippagePercent}% slippage): ${minSolAmount.toFixed(
+            6
+          )} SOL
+💸 Fee: ${feeInSol.toFixed(6)} SOL
+💸 Net received: ${netSolReceived.toFixed(6)} SOL
+📊 Price impact: ${sim.priceImpact.toFixed(2)}%
+💱 Price per token: ${sim.pricePerToken.toFixed(6)} SOL
+
+To execute this swap, use the \`swap\` tool with:
+  --mintAddress "${mintAddress}" --isBuy false --amount ${amount} --slippagePercent ${slippagePercent}`);
+        }
+      } catch (error: any) {
+        return mcpError(
+          `Simulation failed: ${error.message}`,
+          "Check your inputs and try again"
+        );
+      }
+    },
+  },
+  {
+    name: "getMaxBuy",
+    description:
+      "Calculate the maximum amount of SOL you can use to buy tokens",
+    schema: {
+      mintAddress: z.string().describe("Address of token mint"),
+    },
+    async func(args: { mintAddress: string }) {
+      const { mintAddress } = args;
+
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service) {
+        return mcpError(result.error!, result.suggestion);
+      }
+
+      const { service } = result;
+      const mint = new PublicKey(mintAddress);
+
+      try {
+        // Get token name for display
+        const proposalResult = await service.getProposal(mint);
+        const tokenName = proposalResult.success
+          ? proposalResult.data?.name
+          : mintAddress;
+
+        // Get max buy info
+        const maxBuyResult = await service.calculateMaxBuy(mint);
+
+        if (!maxBuyResult.success) {
+          return mcpError(
+            `Failed to calculate max buy: ${maxBuyResult.error?.message}`,
+            "Check the mint address and try again"
+          );
+        }
+
+        // Format the results
+        const maxBuy = maxBuyResult.data;
+        const curveResult = await service.getBondingCurve(mint);
+
+        if (!curveResult.success) {
+          return mcpError(
+            `Failed to get bonding curve data: ${curveResult.error?.message}`,
+            "Check the mint address and try again"
+          );
+        }
+
+        const curve = curveResult.data!;
+        const tokenDecimalsFactor = Math.pow(10, curve.tokenDecimals);
+
+        const maxSolAmount = maxBuy?.maxSolAmount
+          .div(new BN(LAMPORTS_PER_SOL))
+          .toNumber();
+        const tokenAmount = maxBuy?.tokenAmount
+          .div(new BN(tokenDecimalsFactor))
+          .toNumber();
+
+        // Simulate this max buy to get more info
+        const simulationResult = await service.simulateBuy(
+          mint,
+          maxBuy!.maxSolAmount,
+          0.5
+        );
+
+        let priceImpact = "-";
+        let fee = "-";
+
+        if (simulationResult.success) {
+          priceImpact = `${simulationResult.data!.priceImpact.toFixed(2)}%`;
+          fee = `${simulationResult.data!.fee.div(
+            new BN(LAMPORTS_PER_SOL)
+          )} SOL`;
+        }
+
+        return mcpText(`🔝 Maximum Buy for ${tokenName}
+
+💰 Maximum SOL input: ${maxSolAmount?.toFixed(6)} SOL
+🪙 Expected tokens output: ${tokenAmount?.toFixed(6)} tokens
+📊 Estimated price impact: ${priceImpact}
+💸 Estimated fee: ${fee}
+ℹ️ Completion: ${maxBuy?.completionReason}
+
+Note: This is an estimate and actual values may vary slightly due to market conditions.`);
+      } catch (error: any) {
+        return mcpError(
+          `Max buy calculation failed: ${error.message}`,
+          "Check the mint address and try again"
+        );
+      }
+    },
+  },
+  {
+    name: "migrateToRaydium",
+    description:
+      "Migrate from bonding curve to Raydium pool and claim LP tokens",
+    schema: {
+      mintAddress: z.string().describe("Address of token mint"),
+    },
+    async func(args: { mintAddress: string }) {
+      const { mintAddress } = args;
+
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service) {
+        return mcpError(result.error!, result.suggestion);
+      }
+
+      const { service } = result;
+      const mint = new PublicKey(mintAddress);
+
+      try {
+        // Get token name for display
+        const proposalResult = await service.getProposal(mint);
+        const tokenName = proposalResult.success
+          ? proposalResult.data?.name
+          : mintAddress;
+
+        // Check if the bonding curve is complete
+        const curveResult = await service.getBondingCurve(mint);
+        if (!curveResult.success || !curveResult.data) {
+          return mcpError(
+            `Failed to get bonding curve data: ${curveResult.error?.message}`,
+            "Check your mint address"
+          );
+        }
+
+        if (!curveResult.data.complete) {
+          return mcpError(
+            "Bonding curve is not complete yet",
+            "Bonding curve must be complete (SOL raise target met) before migrating to Raydium"
+          );
+        }
+
+        // Migrate and claim LP tokens in one transaction
+        const migrationResult = await service.migrateToRaydiumAndClaimLpTokens(
+          mint
+        );
+
+        if (!migrationResult.success) {
+          return mcpError(
+            `Migration failed: ${migrationResult.error?.message}`,
+            "Please try again later or check if migration has already been completed"
+          );
+        }
+
+        return mcpText(
+          `✅ Successfully migrated ${tokenName} to Raydium and claimed LP tokens!\n\nTransaction: ${migrationResult.data}`
+        );
+      } catch (error: any) {
+        return mcpError(
+          `Migration failed: ${error.message}`,
+          "Please try again or check if migration has already been completed"
+        );
+      }
+    },
+  },
+];

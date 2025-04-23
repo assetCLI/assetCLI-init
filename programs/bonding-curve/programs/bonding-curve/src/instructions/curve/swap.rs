@@ -160,12 +160,7 @@ impl<'info> Swap<'info> {
         min_out_amount: u64,
         fee_lamports: u64
     ) -> Result<()> {
-        let buy_token_with_fee = buy_result.token_amount + fee_lamports;
         require!(buy_result.token_amount >= min_out_amount, ContractError::SlippageExceeded);
-        require!(
-            self.user.get_lamports() >= buy_token_with_fee,
-            ContractError::InsufficientUserSOL
-        );
         // Transfer tokens to user
         let cpi_accounts = TransferChecked {
             from: self.bonding_curve_token_account.to_account_info(),

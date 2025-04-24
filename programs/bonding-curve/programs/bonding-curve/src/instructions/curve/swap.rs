@@ -5,7 +5,14 @@ use anchor_spl::{
 };
 
 use crate::{
-    errors::ContractError, BondingCurve, BuyResult, Global, Proposal, SellResult, TokensPurchased, TokensSold
+    errors::ContractError,
+    BondingCurve,
+    BuyResult,
+    Global,
+    Proposal,
+    SellResult,
+    TokensPurchased,
+    TokensSold,
 };
 
 #[derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)]
@@ -160,6 +167,9 @@ impl<'info> Swap<'info> {
         min_out_amount: u64,
         fee_lamports: u64
     ) -> Result<()> {
+        msg!("Sell result sol amount: {:?}", buy_result.sol_amount);
+        msg!("Sell result token amount: {:?}", buy_result.token_amount);
+        msg!("Min out amount: {:?}", min_out_amount);
         require!(buy_result.token_amount >= min_out_amount, ContractError::SlippageExceeded);
         // Transfer tokens to user
         let cpi_accounts = TransferChecked {
@@ -192,7 +202,7 @@ impl<'info> Swap<'info> {
                 self.bonding_curve_vault.to_account_info(),
                 self.system_program.to_account_info(),
             ],
-            &[]
+            &[&self.bonding_curve.get_vault_seeds()[..]]
         )?;
         self.transfer_fee(fee_lamports)?;
         Ok(())
@@ -205,6 +215,9 @@ impl<'info> Swap<'info> {
         fee_lamports: u64
     ) -> Result<()> {
         // Sell tokens
+        msg!("Sell result sol amount: {:?}", sell_result.sol_amount);
+        msg!("Sell result token amount: {:?}", sell_result.token_amount);
+        msg!("Min out amount: {:?}", min_out_amount);
         require!(sell_result.sol_amount >= min_out_amount, ContractError::SlippageExceeded);
         let cpi_accounts = TransferChecked {
             from: self.user_token_account.to_account_info(),
@@ -217,11 +230,15 @@ impl<'info> Swap<'info> {
             sell_result.token_amount,
             self.mint.decimals
         )?;
-        // Transfer SOL to user
+
+        let user_receive = sell_result.sol_amount
+            .checked_sub(fee_lamports)
+            .ok_or(ContractError::ArithmeticError)?;
+
         let transfer_instruction = system_instruction::transfer(
             self.bonding_curve_vault.key,
             self.user.key,
-            sell_result.sol_amount
+            user_receive
         );
         solana_program::program::invoke_signed(
             &transfer_instruction,
@@ -232,7 +249,22 @@ impl<'info> Swap<'info> {
             ],
             &[&self.bonding_curve.get_vault_seeds()[..]]
         )?;
-        self.transfer_fee(fee_lamports)?;
+
+        // Transfer fee to fee_receiver from vault
+        let fee_transfer_ix = system_instruction::transfer(
+            self.bonding_curve_vault.key,
+            self.fee_receiver.key,
+            fee_lamports
+        );
+        solana_program::program::invoke_signed(
+            &fee_transfer_ix,
+            &[
+                self.bonding_curve_vault.to_account_info(),
+                self.fee_receiver.to_account_info(),
+                self.system_program.to_account_info(),
+            ],
+            &[&self.bonding_curve.get_vault_seeds()[..]]
+        )?;
         Ok(())
     }
 

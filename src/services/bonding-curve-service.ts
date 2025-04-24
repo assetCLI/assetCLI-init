@@ -318,12 +318,12 @@ export class BondingCurveService {
         scaledAmountIn = scaledAmountIn.mul(
           new BN(10).pow(new BN(curveState!.tokenDecimals))
         );
+        scaledMinOutAmount = scaledMinOutAmount.mul(new BN(LAMPORTS_PER_SOL));
+      } else {
+        scaledAmountIn = scaledAmountIn.mul(new BN(LAMPORTS_PER_SOL));
         scaledMinOutAmount = scaledMinOutAmount.mul(
           new BN(10).pow(new BN(curveState!.tokenDecimals))
         );
-      } else {
-        scaledAmountIn = scaledAmountIn.mul(new BN(LAMPORTS_PER_SOL));
-        scaledMinOutAmount = scaledMinOutAmount.mul(new BN(LAMPORTS_PER_SOL));
       }
 
       const swapIx = await this.program.methods
@@ -411,10 +411,9 @@ export class BondingCurveService {
   /** Fetch metadata */
   async getMetadata(mint: PublicKey): Promise<ServiceResponse<any>> {
     try {
-      const metadataPda = this.findMetadataPda(mint);
       const data = await getTokenMetadata(
         this.provider.connection,
-        metadataPda,
+        mint,
         undefined,
         new PublicKey(TOKEN_PROGRAM_ID)
       );
@@ -615,7 +614,7 @@ export class BondingCurveService {
 
       const curve = curveResult.data;
 
-      // Check if the bonding curve has enough SOL to fulfill the sell request
+      // Calculate SOL received for tokenAmount
       const solReceived = this._getSolForSellTokens(
         curve.virtualSolReserves,
         curve.virtualTokenReserves,
@@ -632,7 +631,7 @@ export class BondingCurveService {
         };
       }
 
-      // Calculate fee
+      // Calculate fee (on output SOL)
       const currentTime = Math.floor(Date.now() / 1000);
       const fee = this._calculateFee(
         curve.startTime.toNumber(),
@@ -640,12 +639,14 @@ export class BondingCurveService {
         currentTime
       );
 
+      const netSolReceived = solReceived.sub(fee);
+
       // Calculate price impact
       const virtualSol = curve.virtualSolReserves;
       const virtualToken = curve.virtualTokenReserves;
 
       const spotPrice = this._calculateSpotPrice(virtualSol, virtualToken);
-      const executionPrice = solReceived
+      const executionPrice = netSolReceived
         .mul(new BN(10 ** curve.tokenDecimals))
         .div(tokenAmount);
 
@@ -654,15 +655,17 @@ export class BondingCurveService {
         executionPrice
       );
 
-      // Apply slippage tolerance
+      // Apply slippage tolerance to net output
       const slippageBps = Math.floor(slippageTolerance * 100);
-      const minSolAmount = solReceived
+      const minSolAmount = netSolReceived
         .mul(new BN(10000 - slippageBps))
         .div(new BN(10000));
 
       // Calculate price per token in SOL
       const tokenDecimalsFactor = Math.pow(10, curve.tokenDecimals);
-      const solInDecimal = solReceived.div(new BN(LAMPORTS_PER_SOL)).toNumber();
+      const solInDecimal = netSolReceived
+        .div(new BN(LAMPORTS_PER_SOL))
+        .toNumber();
       const tokensInDecimal = tokenAmount
         .div(new BN(tokenDecimalsFactor))
         .toNumber();
@@ -672,7 +675,7 @@ export class BondingCurveService {
       return {
         success: true,
         data: {
-          expectedSolAmount: solReceived,
+          expectedSolAmount: netSolReceived,
           minSolAmount,
           priceImpact: priceImpactPercent,
           fee,

@@ -11,7 +11,13 @@ use anchor_spl::{
 };
 
 use crate::{
-    errors::ContractError, BondingCurve, CreateBondingCurveParams, Global, ProgramStatus, Proposal, DEFAULT_DECIMALS
+    errors::ContractError,
+    BondingCurve,
+    CreateBondingCurveParams,
+    Global,
+    ProgramStatus,
+    Proposal,
+    DEFAULT_DECIMALS,
 };
 
 #[derive(Accounts)]
@@ -75,7 +81,16 @@ pub struct CreateBondingCurve<'info> {
     )]
     global: Box<Account<'info, Global>>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [
+            b"metadata",
+            token_metadata_program.key().as_ref(),
+            mint.key().as_ref()
+        ],
+        bump,
+        seeds::program = token_metadata_program.key()
+    )]
     ///CHECK: Using seed to validate metadata account
     metadata: UncheckedAccount<'info>,
 

@@ -805,6 +805,184 @@ describe("bonding-curve", async () => {
       getTransactionOnExplorer(signature)
     );
   });
+
+  it("Should create and buy tokens from a bonding curve with a very small target (2 SOL)", async () => {
+    // Create a separate bonding curve with a very small target
+    const smallTargetMetadata = {
+      name: "Small Target Token",
+      symbol: "STT",
+      uri: tokenUri,
+      decimals: 6,
+    };
+
+    const smallSolRaiseTarget = new anchor.BN(2 * anchor.web3.LAMPORTS_PER_SOL);
+
+    // Find mint key for small target bonding curve
+    const [smallMint, __] = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("bonding_curve_token"),
+        Buffer.from(smallTargetMetadata.name),
+        wallet.publicKey.toBuffer(),
+      ],
+      program.programId
+    );
+
+    // Find other PDAs for this curve
+    const tokenMetadataProgram = new anchor.web3.PublicKey(
+      "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+    );
+    const smallMintMetadata = anchor.web3.PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("metadata"),
+        tokenMetadataProgram.toBuffer(),
+        smallMint.toBuffer(),
+      ],
+      tokenMetadataProgram
+    )[0];
+
+    const [smallBondingCurvePda, ___] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("bonding_curve"), smallMint.toBuffer()],
+        program.programId
+      );
+
+    const [smallBondingCurveVaultPda, ____] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("bonding_curve_vault"), smallMint.toBuffer()],
+        program.programId
+      );
+
+    const smallBondingCurveTokenAccount = anchor.utils.token.associatedAddress({
+      mint: smallMint,
+      owner: smallBondingCurveVaultPda,
+    });
+
+    const [smallProposalPda] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("proposal"), smallMint.toBuffer()],
+      program.programId
+    );
+
+    // Create parameters for the small target bonding curve
+    const smallCurveParams = {
+      name: smallTargetMetadata.name,
+      symbol: smallTargetMetadata.symbol,
+      uri: smallTargetMetadata.uri,
+      solRaiseTarget: smallSolRaiseTarget,
+      decimals: 6,
+      tokenTotalSupply: new anchor.BN(1000000).mul(
+        new anchor.BN(Math.pow(10, 6))
+      ), // 1 million tokens
+      description: "A small target bonding curve for testing",
+      treasuryAddress: Keypair.generate().publicKey,
+      authorityAddress: wallet.publicKey,
+      twitterHandle: "@smalltarget",
+      discordLink: "https://discord.gg/smalltarget",
+      websiteUrl: "https://smalltarget.xyz",
+      logoUri: tokenUri,
+      founderName: "Small Target Founder",
+      founderTwitter: "@smallfounder",
+      bullishThesis: "Testing very small target bonding curves",
+    };
+
+    try {
+      // Create the small target bonding curve
+      const tx = await program.methods
+        .createBondingCurve(smallCurveParams)
+        .accountsPartial({
+          mint: smallMint,
+          creator: wallet.publicKey,
+          bondingCurve: smallBondingCurvePda,
+          proposal: smallProposalPda,
+          bondingCurveTokenAccount: smallBondingCurveTokenAccount,
+          global: globalStateAddress,
+          metadata: smallMintMetadata,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          tokenMetadataProgram: tokenMetadataProgram,
+          associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+          bondingCurveVault: smallBondingCurveVaultPda,
+        })
+        .signers([wallet.payer])
+        .rpc({ skipPreflight: true });
+
+      console.log(
+        `Create small target bonding curve transaction signature: ${getTransactionOnExplorer(tx)}`
+      );
+
+      // Now buy the entire target amount in a single transaction
+      const userTokenAccount = anchor.utils.token.associatedAddress({
+        mint: smallMint,
+        owner: wallet.publicKey,
+      });
+
+      // Buy parameters - exactly 2 SOL (the target)
+      const buyAmount = new anchor.BN(2 * anchor.web3.LAMPORTS_PER_SOL);
+      const minOutAmount = new anchor.BN(497500).mul(
+        new anchor.BN(Math.pow(10, 6))
+      ); // Minimum 470k tokens (adjusted for decimals)
+
+      // Increase compute units
+      const modifyComputeUnits =
+        anchor.web3.ComputeBudgetProgram.setComputeUnitLimit({
+          units: 1000000,
+        });
+
+      // Execute the buy transaction
+      const buyTx = new anchor.web3.Transaction().add(modifyComputeUnits);
+      // Add the swap instruction
+      const swapInstruction = await program.methods
+        .swap({
+          baseIn: false,
+          amount: buyAmount,
+          minOutAmount: minOutAmount,
+        })
+        .accountsPartial({
+          user: wallet.publicKey,
+          global: globalStateAddress,
+          feeReceiver: wallet.publicKey,
+          mint: smallMint,
+          bondingCurve: smallBondingCurvePda,
+          bondingCurveTokenAccount: smallBondingCurveTokenAccount,
+          userTokenAccount: userTokenAccount,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
+          clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
+          bondingCurveVault: smallBondingCurveVaultPda,
+          proposal: smallProposalPda,
+        })
+        .instruction();
+
+      buyTx.add(swapInstruction);
+
+      // Send the transaction
+      const buySignature = await provider.sendAndConfirm(buyTx);
+      console.log(
+        "Buy transaction for small target signature: ",
+        getTransactionOnExplorer(buySignature)
+      );
+
+      // Verify the bonding curve is now completed
+      const smallCurve =
+        await program.account.bondingCurve.fetch(smallBondingCurvePda);
+      assert.ok(
+        smallCurve.complete,
+        "Small target bonding curve should be complete now"
+      );
+
+      // Verify the user received tokens
+      const userTokenAccountInfo =
+        await provider.connection.getTokenAccountBalance(userTokenAccount);
+      assert.ok(
+        userTokenAccountInfo.value.uiAmount > 0,
+        "User should have received tokens from small target bonding curve"
+      );
+    } catch (err) {
+      console.error("Error with small target bonding curve:", err);
+      throw err;
+    }
+  });
 });
 
 function getTransactionOnExplorer(tx: string): string {

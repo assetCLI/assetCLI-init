@@ -106,7 +106,7 @@ impl BondingCurve {
     }
 
     pub fn get_vault_seeds(&self) -> [&[u8]; 3] {
-        [Self::VAULT_PREFIX.as_bytes(), self.mint.as_ref(), std::slice::from_ref(&self.bump)]
+        [Self::VAULT_PREFIX.as_bytes(), self.mint.as_ref(), std::slice::from_ref(&self.vault_bump)]
     }
 
     pub fn is_started(&self, clock: &Clock) -> bool {

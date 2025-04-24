@@ -360,6 +360,7 @@ export const bondingCurveTools = [
           const metadata = item.metadata;
 
           return `${index + 1}. ${proposal.name}
+   Complete: ${curve.complete ? "✅" : "❌"}
    Metadata: ${JSON.stringify(metadata, null, 0)}
    Name: ${proposal?.name || "N/A"}
    Description: ${proposal?.description || "N/A"}
@@ -427,7 +428,7 @@ export const bondingCurveTools = [
       const metadata = metadataResult.success ? metadataResult.data : null;
 
       return mcpText(`📊 Bonding Curve Details: ${proposal?.name} 
-
+   Complete: ${curve?.complete ? "✅" : "❌"}
   🔨 Metadata: ${JSON.stringify(metadata, null, 0)}
   🔑 Mint Address: ${mint.toString()}
   🪙 Token Details:
@@ -586,7 +587,7 @@ To execute this swap, use the \`swap\` tool with:
             .div(new BN(LAMPORTS_PER_SOL))
             .toNumber();
           const feeInSol = sim.fee.div(new BN(LAMPORTS_PER_SOL)).toNumber();
-          const netSolReceived = expectedSolAmount - feeInSol;
+          const netSolReceived = expectedSolAmount; // Already net of fee
 
           return mcpText(`🔮 Sell Simulation for ${tokenName}
 

@@ -1059,7 +1059,7 @@ export class BondingCurveService {
         .accountsPartial({
           creator,
           global: globalPda,
-          feeReceiver: this.provider.wallet.publicKey,
+          feeReceiver,
           tokenMint: mint,
           baseMint,
           bondingCurve: curve,

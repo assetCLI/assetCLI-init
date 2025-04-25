@@ -1,5 +1,6 @@
 [toolchain]
 package_manager = "pnpm"
+anchor_version = "0.31.0"
 
 [features]
 resolution = true

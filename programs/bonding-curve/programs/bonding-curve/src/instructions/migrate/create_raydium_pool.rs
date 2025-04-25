@@ -29,7 +29,8 @@ pub struct CreateRaydiumPool<'info> {
     #[account(
         mut,
         address = WSOL_ID,
-        constraint = base_mint.key() < token_mint.key(),
+        // we'll do this check in function instead
+        // constraint = base_mint.key() < token_mint.key(),
     )]
     pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(
@@ -286,27 +287,69 @@ impl<'info> CreateRaydiumPool<'info> {
 
     pub fn create_cpmm_pool(&mut self, funding_amount_wsol: u64, token_amount: u64) -> Result<()> {
         // get 20% of the real sol reserves as the funding amount for pool
+
         let migration_time = Clock::get()?.unix_timestamp as u64;
         let init_amount_0 = funding_amount_wsol; // the WSOL amount
-        let init_amount_1 = token_amount;
+        let init_amount_1 = token_amount; // the token amount
+
+        // swap every related field based on key order
+        let (
+            token_0_mint,
+            token_1_mint,
+            token_0_amount,
+            token_1_amount,
+            token_0_account,
+            token_1_account,
+            token_0_vault,
+            token_1_vault,
+            token_0_program,
+            token_1_program,
+        ) = if self.base_mint.key() < self.token_mint.key() {
+            (
+                self.base_mint.to_account_info(),
+                self.token_mint.to_account_info(),
+                init_amount_0,
+                init_amount_1,
+                self.bonding_curve_base_token_account.to_account_info(),
+                self.bonding_curve_token_account.to_account_info(),
+                self.token_0_vault.to_account_info(),
+                self.token_1_vault.to_account_info(),
+                self.token_program.to_account_info(),
+                self.token_1_program.to_account_info(),
+            )
+        } else {
+            (
+                self.token_mint.to_account_info(),
+                self.base_mint.to_account_info(),
+                init_amount_1,
+                init_amount_0,
+                self.bonding_curve_token_account.to_account_info(),
+                self.bonding_curve_base_token_account.to_account_info(),
+                self.token_1_vault.to_account_info(),
+                self.token_0_vault.to_account_info(),
+                self.token_1_program.to_account_info(),
+                self.token_program.to_account_info(),
+            )
+        };
+
         let accounts = cpi::accounts::Initialize {
             creator: self.bonding_curve_vault.to_account_info(),
             amm_config: self.amm_config.to_account_info(),
             authority: self.authority.to_account_info(),
             pool_state: self.pool_state.to_account_info(),
-            token_0_mint: self.base_mint.to_account_info(),
-            token_1_mint: self.token_mint.to_account_info(),
+            token_0_mint,
+            token_1_mint,
             lp_mint: self.lp_mint.to_account_info(),
-            creator_token_0: self.bonding_curve_base_token_account.to_account_info(),
-            creator_token_1: self.bonding_curve_token_account.to_account_info(),
+            creator_token_0: token_0_account,
+            creator_token_1: token_1_account,
             creator_lp_token: self.bonding_curve_lp_token.to_account_info(),
-            token_0_vault: self.token_0_vault.to_account_info(),
-            token_1_vault: self.token_1_vault.to_account_info(),
+            token_0_vault,
+            token_1_vault,
             create_pool_fee: self.create_pool_fee.to_account_info(),
             observation_state: self.observation_state.to_account_info(),
             token_program: self.token_program.to_account_info(),
-            token_0_program: self.token_program.to_account_info(),
-            token_1_program: self.token_1_program.to_account_info(),
+            token_0_program,
+            token_1_program,
             associated_token_program: self.associated_token_program.to_account_info(),
             system_program: self.system_program.to_account_info(),
             rent: self.rent.to_account_info(),
@@ -317,7 +360,7 @@ impl<'info> CreateRaydiumPool<'info> {
             accounts,
             signer
         );
-        cpi::initialize(cpi_ctx, init_amount_0, init_amount_1, migration_time)
+        cpi::initialize(cpi_ctx, token_0_amount, token_1_amount, migration_time)
     }
 
     pub fn process(&mut self) -> Result<()> {

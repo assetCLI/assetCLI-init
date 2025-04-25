@@ -428,7 +428,6 @@ export const bondingCurveTools = [
       const metadata = metadataResult.success ? metadataResult.data : null;
 
       return mcpText(`📊 Bonding Curve Details: ${proposal?.name} 
-   Complete: ${curve?.complete ? "✅" : "❌"}
   🔨 Metadata: ${JSON.stringify(metadata, null, 0)}
   🔑 Mint Address: ${mint.toString()}
   🪙 Token Details:
@@ -437,13 +436,23 @@ export const bondingCurveTools = [
       .div(new BN(10 ** curve.tokenDecimals))
       .toString()}
     - URI: ${metadata?.uri || proposal?.logoUri || "N/A"}
-
-  💰 Financials:
-    - SOL Raise Target: ${
-      curve?.solRaiseTarget
-        ? curve.solRaiseTarget.toNumber() / 1_000_000_000 + " SOL"
-        : "N/A"
-    }
+    - Authority Address: ${proposal?.authorityAddress.toBase58()}
+  🏦 Treasury Address: ${proposal?.treasuryAddress.toBase58()}
+  📈 Bonding Curve:
+    - Complete: ${curve?.complete ? "✅" : "❌"}
+    - Total Supply: ${curve?.tokenTotalSupply
+      .div(new BN(10 ** curve.tokenDecimals))
+      .toString()}
+    - Sol Raise Target: ${curve?.solRaiseTarget
+      .div(new BN(LAMPORTS_PER_SOL))
+      .toString()} SOL
+    - Token Decimals: ${curve?.tokenDecimals}
+    - Raised Amount: ${curve?.realSolReserves
+      .div(new BN(LAMPORTS_PER_SOL))
+      .toString()} SOL
+    - Tokens left to buy: ${curve?.realTokenReserves
+      .div(new BN(10 ** curve.tokenDecimals))
+      .toString()}
 
   🧑‍💼 Contacts:
     - Website: ${proposal?.websiteUrl || "N/A"}

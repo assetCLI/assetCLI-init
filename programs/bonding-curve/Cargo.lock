@@ -351,6 +351,7 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
  "bytemuck_derive",
+ "proc-macro2",
  "raydium-cpmm-cpi",
  "raydium-locking-cpi",
 ]
@@ -1171,7 +1172,7 @@ dependencies = [
 [[package]]
 name = "raydium-clmm-cpi"
 version = "0.1.0"
-source = "git+https://github.com/raydium-io/raydium-cpi?branch=anchor-0.31.0#c8d1ed80932fb4c6f782c884bb9e5b4454384235"
+source = "git+https://github.com/raydium-io/raydium-cpi#6e9a813c6ea6c6a3d5a8163fefd1819dcc7a1dc9"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
@@ -1180,7 +1181,7 @@ dependencies = [
 [[package]]
 name = "raydium-cpmm-cpi"
 version = "0.1.0"
-source = "git+https://github.com/raydium-io/raydium-cpi?branch=anchor-0.31.0#c8d1ed80932fb4c6f782c884bb9e5b4454384235"
+source = "git+https://github.com/raydium-io/raydium-cpi#6e9a813c6ea6c6a3d5a8163fefd1819dcc7a1dc9"
 dependencies = [
  "anchor-lang",
  "anchor-spl",
@@ -1189,7 +1190,7 @@ dependencies = [
 [[package]]
 name = "raydium-locking-cpi"
 version = "0.1.0"
-source = "git+https://github.com/raydium-io/raydium-cpi?branch=anchor-0.31.0#c8d1ed80932fb4c6f782c884bb9e5b4454384235"
+source = "git+https://github.com/raydium-io/raydium-cpi#6e9a813c6ea6c6a3d5a8163fefd1819dcc7a1dc9"
 dependencies = [
  "anchor-lang",
  "anchor-spl",

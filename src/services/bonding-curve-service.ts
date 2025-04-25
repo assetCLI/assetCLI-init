@@ -61,7 +61,6 @@ export class BondingCurveService {
   ) {
     this.provider = new AnchorProvider(connection, wallet, {
       commitment,
-      skipPreflight: false,
     });
     this.idl = idl;
     this.program = new Program(this.idl, this.provider);
@@ -181,7 +180,7 @@ export class BondingCurveService {
           global: globalPda,
           systemProgram: web3.SystemProgram.programId,
         })
-        .rpc({ skipPreflight: true });
+        .rpc();
       return { success: true, data: tx };
     } catch (error: any) {
       return {
@@ -267,7 +266,7 @@ export class BondingCurveService {
           tokenMetadataProgram: new PublicKey(METADATA_PROGRAM_ID),
           rent: web3.SYSVAR_RENT_PUBKEY,
         })
-        .rpc({ skipPreflight: true });
+        .rpc();
 
       return {
         success: true,
@@ -1116,9 +1115,7 @@ export class BondingCurveService {
         createRaydiumPoolIx,
         claimLpTokensIx
       );
-      const signature = await this.provider.sendAndConfirm(tx, [], {
-        skipPreflight: true,
-      });
+      const signature = await this.provider.sendAndConfirm(tx, []);
 
       return { success: true, data: signature };
     } catch (error: any) {

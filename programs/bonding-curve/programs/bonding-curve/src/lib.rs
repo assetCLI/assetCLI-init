@@ -1,6 +1,6 @@
 #![allow(unexpected_cfgs)]
 
-declare_id!("C2LfjaKea6KJ15zXDzxghTSErN6xEqUnHzpg2Vrpdjnu");
+declare_id!("7siqXYsVP5JZj16HhA1Vcqad6t3SBxH5mPK6GyDdnFnr");
 mod instructions;
 mod state;
 mod errors;

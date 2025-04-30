@@ -31,7 +31,7 @@ pub struct ClaimCreatorLp<'info> {
     #[account(
         mut,
         seeds=[BondingCurve::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()],
-        constraint = bonding_curve.mint == token_mint.key() @ ContractError::NotBondingCurveMint,
+        constraint = bonding_curve.token_mint == token_mint.key() @ ContractError::NotBondingCurveMint,
         bump = bonding_curve.bump
     )]
     pub bonding_curve: Box<Account<'info, BondingCurve>>,
@@ -60,13 +60,16 @@ pub struct ClaimCreatorLp<'info> {
 
 impl<'info> ClaimCreatorLp<'info> {
     pub fn process(&mut self) -> Result<()> {
-        assert!(self.bonding_curve.complete);
-        assert!(self.bonding_curve_lp_token_account.amount > 0);
-        assert!(self.bonding_curve_lp_token_account.mint == self.lp_mint.key(), "Invalid LP mint");
-        assert!(
-            self.proposal_authority.key() == self.proposal.authority_address,
-            "Invalid proposal authority"
+        require!(self.bonding_curve.complete, ContractError::NotCompleted);
+        require!(
+            self.bonding_curve_lp_token_account.mint == self.lp_mint.key(),
+            ContractError::InvalidLPMint
         );
+        require!(
+            self.bonding_curve_lp_token_account.owner == self.bonding_curve_vault.key(),
+            ContractError::InvalidProposalAuthority
+        );
+
         token_interface::transfer_checked(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),

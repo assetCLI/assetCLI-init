@@ -5,6 +5,7 @@ import NodeWallet from "@coral-xyz/anchor/dist/cjs/nodewallet";
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { mockStorage } from "@metaplex-foundation/umi-storage-mock";
 import {
+  createAssociatedTokenAccount,
   createSyncNativeInstruction,
   getAssociatedTokenAddressSync,
   getOrCreateAssociatedTokenAccount,
@@ -24,6 +25,9 @@ import { Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { BN } from "bn.js";
 
 describe("bonding-curve", async () => {
+  const WSOL_ID = new anchor.web3.PublicKey(
+    "So11111111111111111111111111111111111111112"
+  );
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
   const provider = anchor.AnchorProvider.env();
@@ -51,6 +55,11 @@ describe("bonding-curve", async () => {
     uri: "",
     decimals: 6,
   };
+
+  const userBaseAccount = anchor.utils.token.associatedAddress({
+    mint: WSOL_ID,
+    owner: wallet.publicKey,
+  });
   const solRaiseTarget = new anchor.BN(1000 * anchor.web3.LAMPORTS_PER_SOL);
   const [mintKey, _] = anchor.web3.PublicKey.findProgramAddressSync(
     [
@@ -83,6 +92,12 @@ describe("bonding-curve", async () => {
     owner: bondingCurveVaultPda,
   });
 
+  // Find bonding curve base token account
+  const bondingCurveVaultBaseAccount = anchor.utils.token.associatedAddress({
+    mint: WSOL_ID,
+    owner: bondingCurveVaultPda,
+  });
+
   // Find DAO proposal PDA
   const [proposalPda] = anchor.web3.PublicKey.findProgramAddressSync(
     [Buffer.from("proposal"), mintKey.toBuffer()],
@@ -96,9 +111,7 @@ describe("bonding-curve", async () => {
   const AMM_CONFIG_ID = new anchor.web3.PublicKey(
     "D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2"
   );
-  const WSOL_ID = new anchor.web3.PublicKey(
-    "So11111111111111111111111111111111111111112"
-  );
+
   // Address of the Locking CPMM program on devnet
   const LOCK_CPMM_PROGRAM_ID = new anchor.web3.PublicKey(
     "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE"
@@ -155,10 +168,9 @@ describe("bonding-curve", async () => {
     CPMM_PROGRAM_ID
   )[0];
 
-  // Create bonding curve base token account (WSOL)
-  const bondingCurveBaseTokenAccount = anchor.utils.token.associatedAddress({
+  const feeReceiverBaseAccount = anchor.utils.token.associatedAddress({
     mint: WSOL_ID,
-    owner: bondingCurveVaultPda,
+    owner: wallet.publicKey,
   });
 
   // Creator's LP token account
@@ -214,6 +226,24 @@ describe("bonding-curve", async () => {
       [tokenUri] = await umi.uploader.upload([genericFile]);
       console.log("Token URI:", tokenUri);
       metadataOfToken.uri = tokenUri;
+
+      // Lets wrap 1010 SOL in WSOL
+      await createAssociatedTokenAccount(
+        provider.connection,
+        wallet.payer,
+        WSOL_ID,
+        wallet.publicKey
+      );
+      const tx = new anchor.web3.Transaction().add(
+        anchor.web3.SystemProgram.transfer({
+          fromPubkey: wallet.publicKey,
+          toPubkey: userBaseAccount,
+          lamports: 1010 * LAMPORTS_PER_SOL,
+        }),
+        createSyncNativeInstruction(userBaseAccount)
+      );
+      await provider.sendAndConfirm(tx, []);
+      console.log("Wrapped 1010 SOL in WSOL");
     } catch (err) {
       console.error("Error loading token image:", err);
       // Fallback to a test URI if file loading fails
@@ -266,8 +296,9 @@ describe("bonding-curve", async () => {
       name: metadataOfToken.name,
       symbol: metadataOfToken.symbol,
       uri: metadataOfToken.uri,
-      solRaiseTarget: solRaiseTarget,
-      decimals: 6,
+      baseRaiseTarget: solRaiseTarget,
+      tokenDecimals: 6,
+      baseDecimals: 9,
       tokenTotalSupply: new anchor.BN(100_000_000).mul(
         new anchor.BN(Math.pow(10, 6))
       ), // 100 million tokens
@@ -288,7 +319,9 @@ describe("bonding-curve", async () => {
       const tx = await program.methods
         .createBondingCurve(params)
         .accountsPartial({
-          mint: mintKey,
+          tokenMint: mintKey,
+          baseMint: WSOL_ID,
+          bondingCurveVault: bondingCurveVaultPda,
           creator: wallet.publicKey,
           bondingCurve: bondingCurvePda,
           proposal: proposalPda,
@@ -305,17 +338,13 @@ describe("bonding-curve", async () => {
           associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
         })
         .signers([wallet.payer]) // Use the wallet's payer as the signer
-        .rpc({ skipPreflight: true });
+        .rpc();
 
       console.log(
         `Create bonding curve transaction signature: ${getTransactionOnExplorer(tx)}`
       );
 
-      // Fetch and verify the bonding curve
-      const bondingCurve =
-        await program.account.bondingCurve.fetch(bondingCurvePda);
-
-      // Fetch and verify the DAO proposal
+      // Fetch and verify the proposal
       const proposal = await program.account.proposal.fetch(proposalPda);
 
       assert.equal(proposal.name, params.name);
@@ -353,7 +382,6 @@ describe("bonding-curve", async () => {
 
     // Execute the buy with increased compute units
     const tx = new anchor.web3.Transaction().add(modifyComputeUnits);
-
     // Add the swap instruction
     const swapInstruction = await program.methods
       .swap({
@@ -365,8 +393,12 @@ describe("bonding-curve", async () => {
         user: wallet.publicKey,
         global: globalStateAddress,
         feeReceiver: wallet.publicKey,
-        mint: mintKey,
+        tokenMint: mintKey,
+        baseMint: WSOL_ID,
+        bondingCurveBaseAccount: bondingCurveVaultBaseAccount,
+        feeReceiverBaseAccount: feeReceiverBaseAccount,
         bondingCurve: bondingCurvePda,
+        userBaseAccount: userBaseAccount,
         bondingCurveTokenAccount: bondingCurveTokenAccount,
         userTokenAccount: userTokenAccount,
         systemProgram: anchor.web3.SystemProgram.programId,
@@ -429,7 +461,12 @@ describe("bonding-curve", async () => {
         user: wallet.publicKey,
         global: globalStateAddress,
         feeReceiver: wallet.publicKey,
-        mint: mintKey,
+        tokenMint: mintKey,
+        baseMint: WSOL_ID,
+        bondingCurveBaseAccount: bondingCurveVaultBaseAccount,
+        bondingCurveVault: bondingCurveVaultPda,
+        feeReceiverBaseAccount: feeReceiverBaseAccount,
+        userBaseAccount: userBaseAccount,
         bondingCurve: bondingCurvePda,
         bondingCurveTokenAccount: bondingCurveTokenAccount,
         proposal: proposalPda,
@@ -487,12 +524,12 @@ describe("bonding-curve", async () => {
     );
     const bondingCurve =
       await program.account.bondingCurve.fetch(bondingCurvePda);
-
+    console.log(`Starting bonding curve: ${bondingCurve}`);
     // Check if the bonding curve is complete
     if (!bondingCurve.complete) {
-      // We need to fulfill the SOL target to mark it as completed
-      const remainingToTarget = bondingCurve.solRaiseTarget.sub(
-        bondingCurve.realSolReserves
+      // We need to fulfill the base target to mark it as completed
+      const remainingToTarget = bondingCurve.baseRaiseTarget.sub(
+        bondingCurve.realBaseReserves
       );
 
       if (remainingToTarget.gt(new anchor.BN(0))) {
@@ -516,7 +553,7 @@ describe("bonding-curve", async () => {
 
         // Execute the buy
         const tx = new anchor.web3.Transaction().add(modifyComputeUnits);
-
+        console.log(`bro i am swapping`);
         // Add the swap instruction
         const swapInstruction = await program.methods
           .swap({
@@ -528,7 +565,7 @@ describe("bonding-curve", async () => {
             user: wallet.publicKey,
             global: globalStateAddress,
             feeReceiver: wallet.publicKey,
-            mint: mintKey,
+            tokenMint: mintKey,
             bondingCurve: bondingCurvePda,
             bondingCurveTokenAccount: bondingCurveTokenAccount,
             userTokenAccount: userTokenAccount,
@@ -538,6 +575,10 @@ describe("bonding-curve", async () => {
             clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
             bondingCurveVault: bondingCurveVaultPda,
             proposal: proposalPda,
+            baseMint: WSOL_ID,
+            bondingCurveBaseAccount: bondingCurveVaultBaseAccount,
+            feeReceiverBaseAccount: feeReceiverBaseAccount,
+            userBaseAccount: userBaseAccount,
           })
           .instruction();
 
@@ -555,7 +596,7 @@ describe("bonding-curve", async () => {
         );
       }
     }
-
+    console.log(`bro lets do raydium migrate`);
     // Fetch  proposal to get treasury address
     const proposal = await program.account.proposal.fetch(proposalPda);
 
@@ -565,7 +606,16 @@ describe("bonding-curve", async () => {
         units: 1000000,
       });
 
+    const proposalBaseAccount = (await getOrCreateAssociatedTokenAccount(provider.connection, wallet.payer, WSOL_ID, proposal.authorityAddress, true)).address;
+
     try {
+      const proposal = await program.account.proposal.fetch(proposalPda);
+      console.log("Proposal authority:", proposal.authorityAddress.toString());
+      console.log("Wallet public key:", wallet.publicKey.toString());
+      console.log(
+        "Are they equal?",
+        proposal.authorityAddress.equals(wallet.publicKey)
+      );
       // Create the transaction
       const tx = new anchor.web3.Transaction().add(modifyComputeUnits);
 
@@ -580,10 +630,11 @@ describe("bonding-curve", async () => {
           baseMint: WSOL_ID,
           bondingCurve: bondingCurvePda,
           bondingCurveTokenAccount: bondingCurveTokenAccount,
-          bondingCurveBaseTokenAccount: bondingCurveBaseTokenAccount,
+          bondingCurveBaseAccount: bondingCurveVaultBaseAccount,
           proposal: proposalPda,
           proposalTreasury: proposal.treasuryAddress,
           proposalAuthority: proposal.authorityAddress,
+          proposalBaseAccount: proposalBaseAccount,
           proposalTokenAccount: proposalTokenAccount,
           cpSwapProgram: CPMM_PROGRAM_ID,
           ammConfig: AMM_CONFIG_ID,
@@ -609,9 +660,7 @@ describe("bonding-curve", async () => {
       tx.add(createRaydiumPoolIx);
 
       // Send and confirm transaction
-      const signature = await provider.sendAndConfirm(tx, [], {
-        skipPreflight: true,
-      });
+      const signature = await provider.sendAndConfirm(tx, []);
       console.log(
         "Migration transaction signature: ",
         getTransactionOnExplorer(signature)
@@ -797,9 +846,7 @@ describe("bonding-curve", async () => {
       })
       .instruction();
     tx.add(swapIx);
-    const signature = await provider.sendAndConfirm(tx, [], {
-      skipPreflight: true,
-    });
+    const signature = await provider.sendAndConfirm(tx, []);
     console.log(
       "Raydium swap and wrap transaction signature: ",
       getTransactionOnExplorer(signature)
@@ -857,6 +904,11 @@ describe("bonding-curve", async () => {
       owner: smallBondingCurveVaultPda,
     });
 
+    const smallBondingCurveBaseAccount = anchor.utils.token.associatedAddress({
+      mint: WSOL_ID,
+      owner: smallBondingCurveVaultPda,
+    });
+
     const [smallProposalPda] = anchor.web3.PublicKey.findProgramAddressSync(
       [Buffer.from("proposal"), smallMint.toBuffer()],
       program.programId
@@ -867,8 +919,9 @@ describe("bonding-curve", async () => {
       name: smallTargetMetadata.name,
       symbol: smallTargetMetadata.symbol,
       uri: smallTargetMetadata.uri,
-      solRaiseTarget: smallSolRaiseTarget,
-      decimals: 6,
+      baseRaiseTarget: smallSolRaiseTarget,
+      tokenDecimals: 6,
+      baseDecimals: 9,
       tokenTotalSupply: new anchor.BN(1000000).mul(
         new anchor.BN(Math.pow(10, 6))
       ), // 1 million tokens
@@ -889,7 +942,8 @@ describe("bonding-curve", async () => {
       const tx = await program.methods
         .createBondingCurve(smallCurveParams)
         .accountsPartial({
-          mint: smallMint,
+          tokenMint: smallMint,
+          baseMint: WSOL_ID,
           creator: wallet.publicKey,
           bondingCurve: smallBondingCurvePda,
           proposal: smallProposalPda,
@@ -904,7 +958,7 @@ describe("bonding-curve", async () => {
           bondingCurveVault: smallBondingCurveVaultPda,
         })
         .signers([wallet.payer])
-        .rpc({ skipPreflight: true });
+        .rpc();
 
       console.log(
         `Create small target bonding curve transaction signature: ${getTransactionOnExplorer(tx)}`
@@ -941,7 +995,11 @@ describe("bonding-curve", async () => {
           user: wallet.publicKey,
           global: globalStateAddress,
           feeReceiver: wallet.publicKey,
-          mint: smallMint,
+          tokenMint: smallMint,
+          baseMint: WSOL_ID,
+          bondingCurveBaseAccount: smallBondingCurveBaseAccount,
+          feeReceiverBaseAccount: feeReceiverBaseAccount,
+          userBaseAccount: userBaseAccount,
           bondingCurve: smallBondingCurvePda,
           bondingCurveTokenAccount: smallBondingCurveTokenAccount,
           userTokenAccount: userTokenAccount,

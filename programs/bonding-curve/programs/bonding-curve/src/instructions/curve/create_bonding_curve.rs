@@ -17,7 +17,7 @@ use crate::{
     Global,
     ProgramStatus,
     Proposal,
-    DEFAULT_DECIMALS,
+    
 };
 
 #[derive(Accounts)]
@@ -26,7 +26,7 @@ pub struct CreateBondingCurve<'info> {
     #[account(
         init,
         payer = creator,
-        mint::decimals = params.decimals.unwrap_or(DEFAULT_DECIMALS),
+        mint::decimals = params.token_decimals,
         mint::authority = bonding_curve,
         seeds = [
             BondingCurve::TOKEN_PREFIX.as_bytes(),
@@ -35,15 +35,20 @@ pub struct CreateBondingCurve<'info> {
         ],
         bump
     )]
-    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    pub token_mint: Box<InterfaceAccount<'info, Mint>>,
 
+    #[account(
+        mut,
+        constraint = base_mint.decimals == params.base_decimals @ ContractError::InvalidBaseMint,
+    )]
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut)]
     pub creator: Signer<'info>,
 
     #[account(
         init,
         payer = creator,
-        seeds = [BondingCurve::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
+        seeds = [BondingCurve::SEED_PREFIX.as_bytes(), token_mint.to_account_info().key.as_ref()],
         bump,
         space = 8 + BondingCurve::INIT_SPACE
     )]
@@ -51,7 +56,7 @@ pub struct CreateBondingCurve<'info> {
 
     #[account(
         mut,
-        seeds = [BondingCurve::VAULT_PREFIX.as_bytes(), mint.key().as_ref()],
+        seeds = [BondingCurve::VAULT_PREFIX.as_bytes(), token_mint.key().as_ref()],
         bump,
     )]
     pub bonding_curve_vault: SystemAccount<'info>,
@@ -59,7 +64,7 @@ pub struct CreateBondingCurve<'info> {
     #[account(
         init,
         payer = creator,
-        seeds = [Proposal::SEED_PREFIX.as_bytes(), mint.key().as_ref()],
+        seeds = [Proposal::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()],
         bump,
         space = 8 + Proposal::INIT_SPACE
     )]
@@ -68,7 +73,7 @@ pub struct CreateBondingCurve<'info> {
     #[account(
         init_if_needed,
         payer = creator,
-        associated_token::mint = mint,
+        associated_token::mint = token_mint,
         associated_token::authority = bonding_curve_vault
     )]
     bonding_curve_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
@@ -86,7 +91,7 @@ pub struct CreateBondingCurve<'info> {
         seeds = [
             b"metadata",
             token_metadata_program.key().as_ref(),
-            mint.key().as_ref()
+            token_mint.key().as_ref()
         ],
         bump,
         seeds::program = token_metadata_program.key()
@@ -114,8 +119,9 @@ impl<'info> CreateBondingCurve<'info> {
 
         // Then update the bonding curve
         self.bonding_curve.update_from_params(
-            self.mint.key(),
-            *self.creator.key,
+            self.token_mint.key(),
+            self.base_mint.key(),
+            self.creator.key(),
             &params,
             &clock,
             bumps.bonding_curve,
@@ -133,7 +139,7 @@ impl<'info> CreateBondingCurve<'info> {
                 MintTo {
                     authority: self.bonding_curve.to_account_info(),
                     to: self.bonding_curve_token_account.to_account_info(),
-                    mint: self.mint.to_account_info(),
+                    mint: self.token_mint.to_account_info(),
                 },
                 mint_auth_signer_seeds
             ),
@@ -150,7 +156,7 @@ impl<'info> CreateBondingCurve<'info> {
     ) -> Result<()> {
         // Initialize proposal with provided parameters
         self.proposal.set_inner(Proposal {
-            mint: self.mint.key(),
+            mint: self.token_mint.key(),
             creator: *self.creator.key,
             name: params.name.clone(),
             description: params.description.clone(),
@@ -169,7 +175,7 @@ impl<'info> CreateBondingCurve<'info> {
     }
 
     fn initialize_meta(&mut self, params: &CreateBondingCurveParams) -> Result<()> {
-        let mint_info = self.mint.to_account_info();
+        let mint_info = self.token_mint.to_account_info();
         let metadata_info = self.metadata.to_account_info();
         let mint_authority_info = self.bonding_curve.to_account_info();
         let mint_auth_signer_seeds = self.bonding_curve.get_signer_seeds();

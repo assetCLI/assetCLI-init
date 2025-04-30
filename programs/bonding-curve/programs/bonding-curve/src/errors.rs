@@ -80,4 +80,10 @@ pub enum ContractError {
 
     #[msg("Invalid proposal authority")]
     InvalidProposalAuthority,
+
+    #[msg("Invalid Base Mint")]
+    InvalidBaseMint,
+
+    #[msg("Invalid LP Mint")]
+    InvalidLPMint,
 }

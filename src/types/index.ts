@@ -53,31 +53,32 @@ export interface GlobalInitParams {
   migrateFeeAmount?: BN | undefined;
   feeReceiver?: PublicKey | undefined;
   status?:
-    | { running: {} }
     | { swapOnly: {} }
     | { swapOnlyNoLaunch: {} }
     | { paused: {} }
+    | { running: {} }
     | undefined;
 }
 
 export interface CreateBondingCurveParams {
+  baseMint: PublicKey;
   name: string;
   symbol: string;
   buff?: Buffer | Uint8Array | ArrayBuffer | undefined;
-  solRaiseTarget: BN;
+  baseRaiseTarget: BN;
   description: string;
-  authorityAddress: PublicKey;
-  treasuryAddress: PublicKey;
-  mintDecimals: number;
+  treasuryAddress: PublicKey; // or PublicKey if that's what your contract expects
+  authorityAddress: PublicKey; // or PublicKey
+  tokenDecimals: number;
+  baseDecimals: number;
   tokenTotalSupply: BN;
-  // optional proposal metadata
-  twitterHandle?: string | undefined;
-  discordLink?: string | undefined;
-  websiteUrl?: string | undefined;
-  logoUri?: string | undefined;
-  founderName?: string | undefined;
-  founderTwitter?: string | undefined;
-  bullishThesis?: string | undefined;
+  twitterHandle?: string | null | undefined;
+  discordLink?: string | null | undefined;
+  websiteUrl?: string | null | undefined;
+  logoUri?: string | null | undefined;
+  founderName?: string | null | undefined;
+  founderTwitter?: string | null | undefined;
+  bullishThesis?: string | null | undefined;
 }
 
 export interface SwapParams {
@@ -129,19 +130,21 @@ export interface AMMConfig {
 }
 
 export interface BondingCurveData {
-  mint: PublicKey;
+  tokenMint: PublicKey;
+  baseMint: PublicKey;
   creator: PublicKey;
-  virtualSolReserves: BN;
+  virtualBaseReserves: BN;
   virtualTokenReserves: BN;
-  realSolReserves: BN;
+  realBaseReserves: BN;
   realTokenReserves: BN;
   tokenTotalSupply: BN;
   startTime: BN;
   complete: boolean;
   tokenDecimals: number;
-  solRaiseTarget: BN;
-  bump: number;
+  baseDecimals: number;
+  baseRaiseTarget: BN;
   vaultBump: number;
+  bump: number;
 }
 
 export interface BondingCurveAndProposalData {

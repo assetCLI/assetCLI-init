@@ -362,7 +362,7 @@ export type BondingCurve = {
       ],
       "accounts": [
         {
-          "name": "mint",
+          "name": "tokenMint",
           "writable": true,
           "pda": {
             "seeds": [
@@ -402,6 +402,10 @@ export type BondingCurve = {
           }
         },
         {
+          "name": "baseMint",
+          "writable": true
+        },
+        {
           "name": "creator",
           "writable": true,
           "signer": true
@@ -431,7 +435,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
               }
             ]
           }
@@ -467,7 +471,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
               }
             ]
           }
@@ -492,7 +496,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
               }
             ]
           }
@@ -545,7 +549,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
               }
             ],
             "program": {
@@ -629,7 +633,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
               }
             ],
             "program": {
@@ -715,8 +719,7 @@ export type BondingCurve = {
         },
         {
           "name": "baseMint",
-          "writable": true,
-          "address": "So11111111111111111111111111111111111111112"
+          "writable": true
         },
         {
           "name": "bondingCurve",
@@ -875,7 +878,7 @@ export type BondingCurve = {
           }
         },
         {
-          "name": "bondingCurveBaseTokenAccount",
+          "name": "bondingCurveBaseAccount",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1045,6 +1048,96 @@ export type BondingCurve = {
               {
                 "kind": "account",
                 "path": "tokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "proposalBaseAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "proposalAuthority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "baseMint"
               }
             ],
             "program": {
@@ -2553,7 +2646,100 @@ export type BondingCurve = {
           "writable": true
         },
         {
-          "name": "mint"
+          "name": "feeReceiverBaseAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "feeReceiver"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "baseMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "tokenMint"
+        },
+        {
+          "name": "baseMint"
         },
         {
           "name": "bondingCurve",
@@ -2580,7 +2766,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
               }
             ]
           }
@@ -2616,7 +2802,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
               }
             ]
           }
@@ -2669,7 +2855,97 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "bondingCurveBaseAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bondingCurveVault"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "baseMint"
               }
             ],
             "program": {
@@ -2759,7 +3035,97 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "userBaseAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "baseMint"
               }
             ],
             "program": {
@@ -2820,7 +3186,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "tokenMint"
               }
             ]
           }
@@ -3101,6 +3467,16 @@ export type BondingCurve = {
       "code": 6027,
       "name": "invalidProposalAuthority",
       "msg": "Invalid proposal authority"
+    },
+    {
+      "code": 6028,
+      "name": "invalidBaseMint",
+      "msg": "Invalid Base Mint"
+    },
+    {
+      "code": 6029,
+      "name": "invalidLpMint",
+      "msg": "Invalid LP Mint"
     }
   ],
   "types": [
@@ -3196,7 +3572,11 @@ export type BondingCurve = {
         "kind": "struct",
         "fields": [
           {
-            "name": "mint",
+            "name": "tokenMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "baseMint",
             "type": "pubkey"
           },
           {
@@ -3204,7 +3584,7 @@ export type BondingCurve = {
             "type": "pubkey"
           },
           {
-            "name": "virtualSolReserves",
+            "name": "virtualBaseReserves",
             "type": "u64"
           },
           {
@@ -3212,7 +3592,7 @@ export type BondingCurve = {
             "type": "u64"
           },
           {
-            "name": "realSolReserves",
+            "name": "realBaseReserves",
             "type": "u64"
           },
           {
@@ -3236,7 +3616,11 @@ export type BondingCurve = {
             "type": "u8"
           },
           {
-            "name": "solRaiseTarget",
+            "name": "baseDecimals",
+            "type": "u8"
+          },
+          {
+            "name": "baseRaiseTarget",
             "type": "u64"
           },
           {
@@ -3268,14 +3652,16 @@ export type BondingCurve = {
             "type": "string"
           },
           {
-            "name": "solRaiseTarget",
+            "name": "baseRaiseTarget",
             "type": "u64"
           },
           {
-            "name": "decimals",
-            "type": {
-              "option": "u8"
-            }
+            "name": "tokenDecimals",
+            "type": "u8"
+          },
+          {
+            "name": "baseDecimals",
+            "type": "u8"
           },
           {
             "name": "tokenTotalSupply",
@@ -3624,7 +4010,7 @@ export type BondingCurve = {
             "type": "pubkey"
           },
           {
-            "name": "finalSolRaised",
+            "name": "finalBaseRaised",
             "type": "u64"
           },
           {
@@ -3648,7 +4034,7 @@ export type BondingCurve = {
             "type": "pubkey"
           },
           {
-            "name": "solAmount",
+            "name": "baseAmount",
             "type": "u64"
           },
           {
@@ -3684,7 +4070,7 @@ export type BondingCurve = {
             "type": "u64"
           },
           {
-            "name": "solAmount",
+            "name": "baseAmount",
             "type": "u64"
           },
           {

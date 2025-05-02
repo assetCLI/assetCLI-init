@@ -6,6 +6,7 @@ import * as anchor from "@coral-xyz/anchor";
 import IDL from "../../idls/bonding_curve.json";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
+import { CreateBondingCurveParams } from "../types";
 
 async function getBondingCurveService() {
   const context = await useMcpContext({ requireWallet: true });
@@ -161,17 +162,21 @@ export const bondingCurveTools = [
   {
     name: "createBondingCurve",
     description:
-      "Create a new token on a linear bonding curve with a sol raise target",
+      "Create a new token on a linear bonding curve with a base raise target",
     schema: {
       name: z.string().describe("Token name"),
       symbol: z.string().describe("Token symbol"),
       description: z.string().describe("Token description"),
-      solRaiseTarget: z
+      baseRaiseTarget: z
         .number()
-        .describe("Sol raise target in SOL(not in lamports)"),
+        .describe(
+          "Base raise target (in base token units, e.g. SOL, not lamports)"
+        ),
+      baseMint: z.string().describe("Base token mint address (e.g. WSOL)"),
       image: z.string().describe("Base64 encoded image data"),
-      decimals: z.number().default(9).describe("Token decimals"),
-      totalSupply: z.number().describe("Total token supply"),
+      tokenDecimals: z.number().default(9).describe("Token decimals"),
+      baseDecimals: z.number().default(9).describe("Base token decimals"),
+      tokenTotalSupply: z.number().describe("Total token supply"),
       twitterHandle: z
         .string()
         .optional()
@@ -188,29 +193,17 @@ export const bondingCurveTools = [
         .optional()
         .describe("Bullish thesis for token (optional)"),
     },
-    async func(args: {
-      name: string;
-      symbol: string;
-      description: string;
-      solRaiseTarget: number;
-      image: string;
-      decimals?: number | undefined;
-      totalSupply: number;
-      twitterHandle?: string | undefined;
-      discordLink?: string | undefined;
-      websiteUrl?: string | undefined;
-      founderName?: string | undefined;
-      founderTwitter?: string | undefined;
-      bullishThesis?: string | undefined;
-    }) {
+    async func(args: any) {
       const {
         name,
         symbol,
         description,
-        solRaiseTarget,
+        baseRaiseTarget,
+        baseMint,
         image,
-        decimals = 9,
-        totalSupply,
+        tokenDecimals = 9,
+        baseDecimals = 9,
+        tokenTotalSupply,
         twitterHandle,
         discordLink,
         websiteUrl,
@@ -239,23 +232,25 @@ export const bondingCurveTools = [
         }
       }
 
-      const createParams = {
+      const createParams: CreateBondingCurveParams = {
+        baseMint: new PublicKey(baseMint),
         name,
         symbol,
-        description,
-        solRaiseTarget: new BN(solRaiseTarget),
         buff: imageBuffer,
-        mintDecimals: decimals,
-        tokenTotalSupply: new BN(totalSupply),
+        baseRaiseTarget: new BN(baseRaiseTarget),
+        description,
         treasuryAddress: wallet.publicKey,
         authorityAddress: wallet.publicKey,
-        twitterHandle,
-        discordLink,
-        websiteUrl,
-        logoUri: undefined,
-        founderName,
-        founderTwitter,
-        bullishThesis,
+        tokenDecimals,
+        baseDecimals,
+        tokenTotalSupply: new BN(tokenTotalSupply),
+        twitterHandle: twitterHandle ?? null,
+        discordLink: discordLink ?? null,
+        websiteUrl: websiteUrl ?? null,
+        logoUri: null,
+        founderName: founderName ?? null,
+        founderTwitter: founderTwitter ?? null,
+        bullishThesis: bullishThesis ?? null,
       };
 
       const createResult = await service.createBondingCurve(createParams);
@@ -268,34 +263,31 @@ export const bondingCurveTools = [
       }
 
       return mcpText(
-        `✅ Successfully created token with bonding curve!\n\nToken: ${name} (${symbol})\nMint Address: ${createResult.data.mintAddress}\nTransaction: ${createResult.data.tx}`
+        `✅ Successfully created token with bonding curve!\n\nToken: ${name} (${symbol})\nMint Address: ${createResult.data.tokenMintAddress}\nTransaction: ${createResult.data.tx}`
       );
     },
   },
   {
     name: "swap",
-    description: "Swap between SOL and tokens using the bonding curve",
+    description: "Swap between base and tokens using the bonding curve",
     schema: {
       mintAddress: z.string().describe("Address of token mint"),
       isBuy: z
         .boolean()
-        .describe("True to buy tokens with SOL, False to sell tokens for SOL"),
+        .describe(
+          "True to buy tokens with base, False to sell tokens for base"
+        ),
       amount: z
         .number()
-        .describe("Amount to swap (in SOL if buying, in tokens if selling)"),
-      mintOutAmount: z
+        .describe("Amount to swap (in base if buying, in tokens if selling)"),
+      minOutAmount: z
         .number()
         .describe(
-          "Minimum output amount (provided in tokens if buying, in SOL if selling) (provided from simulateSwap)"
+          "Minimum output amount (provided in tokens if buying, in base if selling) (provided from simulateSwap)"
         ),
     },
-    async func(args: {
-      mintAddress: string;
-      isBuy: boolean;
-      amount: number;
-      mintOutAmount: number;
-    }) {
-      const { mintAddress, isBuy, amount, mintOutAmount } = args;
+    async func(args: any) {
+      const { mintAddress, isBuy, amount, minOutAmount } = args;
       const result = await getBondingCurveService();
       if (!result.success || !result.service) {
         return mcpError(result.error!, result.suggestion);
@@ -304,16 +296,17 @@ export const bondingCurveTools = [
       const { service } = result;
       let mint = new PublicKey(mintAddress);
       const curveResult = await service.getBondingCurve(mint);
-      if (!curveResult.success) {
+      if (!curveResult.success || !curveResult.data) {
         return mcpError(
           `Failed to get bonding curve data: ${curveResult.error?.message}`,
           "Check your mint address"
         );
       }
+
       const swapParams = {
         baseIn: !isBuy,
         amount: new BN(amount),
-        minOutAmount: new BN(mintOutAmount),
+        minOutAmount: new BN(minOutAmount),
       };
 
       const swapResult = await service.swap(mint, swapParams);
@@ -377,10 +370,11 @@ export const bondingCurveTools = [
     Total Supply: ${curve.tokenTotalSupply
       .div(new BN(10 ** curve.tokenDecimals))
       .toString()}
-    Sol Raise Target: ${curve.solRaiseTarget
-      .div(new BN(LAMPORTS_PER_SOL))
-      .toString()} SOL
-    Token Address: ${curve.mint.toBase58()}
+    Base Raise Target: ${curve.baseRaiseTarget
+      .div(new BN(10).pow(new BN(curve.baseDecimals)))
+      .toString()} 
+    Token Address: ${curve.tokenMint.toBase58()}
+    Base Mint Address: ${curve.baseMint.toBase58()}
     Treasury Address: ${proposal.treasuryAddress.toBase58()}
     URI: ${metadata?.uri || proposal?.logoUri || "N/A"}
   `;
@@ -443,12 +437,12 @@ export const bondingCurveTools = [
     - Total Supply: ${curve?.tokenTotalSupply
       .div(new BN(10 ** curve.tokenDecimals))
       .toString()}
-    - Sol Raise Target: ${curve?.solRaiseTarget
-      .div(new BN(LAMPORTS_PER_SOL))
+    - Sol Raise Target: ${curve?.baseRaiseTarget
+      .div(new BN(10 ** curve.baseDecimals))
       .toString()} SOL
     - Token Decimals: ${curve?.tokenDecimals}
-    - Raised Amount: ${curve?.realSolReserves
-      .div(new BN(LAMPORTS_PER_SOL))
+    - Raised Amount: ${curve?.baseRaiseTarget
+      .div(new BN(10 ** curve.baseDecimals))
       .toString()} SOL
     - Tokens left to buy: ${curve?.realTokenReserves
       .div(new BN(10 ** curve.tokenDecimals))
@@ -589,11 +583,11 @@ To execute this swap, use the \`swap\` tool with:
 
           // Format the results for display
           const sim = simulationResult.data!;
-          const expectedSolAmount = sim.expectedSolAmount
-            .div(new BN(LAMPORTS_PER_SOL))
+          const expectedSolAmount = sim.expectedBaseAmount
+            .div(new BN(10 ** sim.baseDecimals))
             .toNumber();
-          const minSolAmount = sim.minSolAmount
-            .div(new BN(LAMPORTS_PER_SOL))
+          const minSolAmount = sim.minBaseAmount
+            .div(new BN(10 ** sim.baseDecimals))
             .toNumber();
           const feeInSol = sim.fee.div(new BN(LAMPORTS_PER_SOL)).toNumber();
           const netSolReceived = expectedSolAmount; // Already net of fee
@@ -670,8 +664,8 @@ To execute this swap, use the \`swap\` tool with:
         const curve = curveResult.data!;
         const tokenDecimalsFactor = Math.pow(10, curve.tokenDecimals);
 
-        const maxSolAmount = maxBuy?.maxSolAmount
-          .div(new BN(LAMPORTS_PER_SOL))
+        const maxBaseAmount = maxBuy?.maxBaseAmount
+          .div(new BN(10 ** curve.baseDecimals))
           .toNumber();
         const tokenAmount = maxBuy?.tokenAmount
           .div(new BN(tokenDecimalsFactor))
@@ -680,7 +674,7 @@ To execute this swap, use the \`swap\` tool with:
         // Simulate this max buy to get more info
         const simulationResult = await service.simulateBuy(
           mint,
-          maxBuy!.maxSolAmount,
+          maxBuy!.maxBaseAmount,
           0.5
         );
 
@@ -690,13 +684,13 @@ To execute this swap, use the \`swap\` tool with:
         if (simulationResult.success) {
           priceImpact = `${simulationResult.data!.priceImpact.toFixed(2)}%`;
           fee = `${simulationResult.data!.fee.div(
-            new BN(LAMPORTS_PER_SOL)
+            new BN(10 ** curve.baseDecimals)
           )} SOL`;
         }
 
         return mcpText(`🔝 Maximum Buy for ${tokenName}
 
-💰 Maximum SOL input: ${maxSolAmount?.toFixed(6)} SOL
+💰 Maximum SOL input: ${maxBaseAmount?.toFixed(6)} 
 🪙 Expected tokens output: ${tokenAmount?.toFixed(6)} tokens
 📊 Estimated price impact: ${priceImpact}
 💸 Estimated fee: ${fee}

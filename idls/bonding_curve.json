@@ -356,7 +356,7 @@
       ],
       "accounts": [
         {
-          "name": "mint",
+          "name": "token_mint",
           "writable": true,
           "pda": {
             "seeds": [
@@ -396,6 +396,10 @@
           }
         },
         {
+          "name": "base_mint",
+          "writable": true
+        },
+        {
           "name": "creator",
           "writable": true,
           "signer": true
@@ -425,7 +429,7 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
               }
             ]
           }
@@ -461,7 +465,7 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
               }
             ]
           }
@@ -486,7 +490,7 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
               }
             ]
           }
@@ -539,7 +543,7 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
               }
             ],
             "program": {
@@ -623,7 +627,7 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
               }
             ],
             "program": {
@@ -709,8 +713,7 @@
         },
         {
           "name": "base_mint",
-          "writable": true,
-          "address": "So11111111111111111111111111111111111111112"
+          "writable": true
         },
         {
           "name": "bonding_curve",
@@ -869,7 +872,7 @@
           }
         },
         {
-          "name": "bonding_curve_base_token_account",
+          "name": "bonding_curve_base_account",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1039,6 +1042,96 @@
               {
                 "kind": "account",
                 "path": "token_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "proposal_base_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "proposal_authority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
               }
             ],
             "program": {
@@ -2547,7 +2640,100 @@
           "writable": true
         },
         {
-          "name": "mint"
+          "name": "fee_receiver_base_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "fee_receiver"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_mint"
+        },
+        {
+          "name": "base_mint"
         },
         {
           "name": "bonding_curve",
@@ -2574,7 +2760,7 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
               }
             ]
           }
@@ -2610,7 +2796,7 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
               }
             ]
           }
@@ -2663,7 +2849,97 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "bonding_curve_base_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bonding_curve_vault"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
               }
             ],
             "program": {
@@ -2753,7 +3029,97 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "user_base_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "base_mint"
               }
             ],
             "program": {
@@ -2814,7 +3180,7 @@
               },
               {
                 "kind": "account",
-                "path": "mint"
+                "path": "token_mint"
               }
             ]
           }
@@ -3095,6 +3461,16 @@
       "code": 6027,
       "name": "InvalidProposalAuthority",
       "msg": "Invalid proposal authority"
+    },
+    {
+      "code": 6028,
+      "name": "InvalidBaseMint",
+      "msg": "Invalid Base Mint"
+    },
+    {
+      "code": 6029,
+      "name": "InvalidLPMint",
+      "msg": "Invalid LP Mint"
     }
   ],
   "types": [
@@ -3190,7 +3566,11 @@
         "kind": "struct",
         "fields": [
           {
-            "name": "mint",
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "base_mint",
             "type": "pubkey"
           },
           {
@@ -3198,7 +3578,7 @@
             "type": "pubkey"
           },
           {
-            "name": "virtual_sol_reserves",
+            "name": "virtual_base_reserves",
             "type": "u64"
           },
           {
@@ -3206,7 +3586,7 @@
             "type": "u64"
           },
           {
-            "name": "real_sol_reserves",
+            "name": "real_base_reserves",
             "type": "u64"
           },
           {
@@ -3230,7 +3610,11 @@
             "type": "u8"
           },
           {
-            "name": "sol_raise_target",
+            "name": "base_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "base_raise_target",
             "type": "u64"
           },
           {
@@ -3262,14 +3646,16 @@
             "type": "string"
           },
           {
-            "name": "sol_raise_target",
+            "name": "base_raise_target",
             "type": "u64"
           },
           {
-            "name": "decimals",
-            "type": {
-              "option": "u8"
-            }
+            "name": "token_decimals",
+            "type": "u8"
+          },
+          {
+            "name": "base_decimals",
+            "type": "u8"
           },
           {
             "name": "token_total_supply",
@@ -3618,7 +4004,7 @@
             "type": "pubkey"
           },
           {
-            "name": "final_sol_raised",
+            "name": "final_base_raised",
             "type": "u64"
           },
           {
@@ -3642,7 +4028,7 @@
             "type": "pubkey"
           },
           {
-            "name": "sol_amount",
+            "name": "base_amount",
             "type": "u64"
           },
           {
@@ -3678,7 +4064,7 @@
             "type": "u64"
           },
           {
-            "name": "sol_amount",
+            "name": "base_amount",
             "type": "u64"
           },
           {

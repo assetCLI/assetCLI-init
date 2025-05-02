@@ -1,4 +1,5 @@
 lockfileVersion: '9.0'
+
 settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
@@ -19,6 +20,9 @@ importers:
       '@metaplex-foundation/umi-bundle-defaults':
         specifier: ^1.1.1
         version: 1.1.1(@metaplex-foundation/umi@1.1.1)(@solana/web3.js@1.98.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))
+      '@metaplex-foundation/umi-storage-mock':
+        specifier: ^1.2.0
+        version: 1.2.0(@metaplex-foundation/umi@1.1.1)
       '@metaplex-foundation/umi-uploader-irys':
         specifier: ^1.1.1
         version: 1.1.1(@metaplex-foundation/umi@1.1.1)(@solana/web3.js@1.98.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(arweave@1.15.5)(bufferutil@4.0.9)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.8.2)(utf-8-validate@5.0.10)
@@ -1105,6 +1109,11 @@ packages:
 
   '@metaplex-foundation/umi-serializers@1.1.1':
     resolution: {integrity: sha512-bR3DwA+6N1GMMToZw3C9DvuRQQFYtFOIJRnBDXhBBezpzz2S/imoEMZRaHjWCNdNrZy4x3LZjqcgmO9ynPLpXQ==}
+
+  '@metaplex-foundation/umi-storage-mock@1.2.0':
+    resolution: {integrity: sha512-c2/YO3UnahaKn0n9pnWD9fRSNpyoNUdOLHgauYo/ma3/GBRAVUtMGlDEscP92bu6ubQGp2/+8+gtHVyraddkvg==}
+    peerDependencies:
+      '@metaplex-foundation/umi': ^1.2.0
 
   '@metaplex-foundation/umi-transaction-factory-web3js@0.9.2':
     resolution: {integrity: sha512-fR1Kf21uylMFd1Smkltmj4jTNxhqSWf416owsJ+T+cvJi2VCOcOwq/3UFzOrpz78fA0RhsajKYKj0HYsRnQI1g==}
@@ -7442,6 +7451,10 @@ snapshots:
       '@metaplex-foundation/umi-serializers-core': 1.1.1
       '@metaplex-foundation/umi-serializers-encodings': 1.1.1
       '@metaplex-foundation/umi-serializers-numbers': 1.1.1
+
+  '@metaplex-foundation/umi-storage-mock@1.2.0(@metaplex-foundation/umi@1.1.1)':
+    dependencies:
+      '@metaplex-foundation/umi': 1.1.1
 
   '@metaplex-foundation/umi-transaction-factory-web3js@0.9.2(@metaplex-foundation/umi@0.9.2)(@solana/web3.js@1.98.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))':
     dependencies:

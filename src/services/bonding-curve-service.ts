@@ -47,6 +47,7 @@ import {
 import { irysUploader } from "@metaplex-foundation/umi-uploader-irys";
 import { findMetadataPda } from "@metaplex-foundation/mpl-token-metadata";
 import { BondingCurve } from "../types/bonding_curve";
+import { mockStorage } from "@metaplex-foundation/umi-storage-mock";
 
 export class BondingCurveService {
   private program: Program<BondingCurve>;
@@ -191,17 +192,21 @@ export class BondingCurveService {
   }
 
   /** Create a new bonding curve + DAO proposal */
-  async createBondingCurve(
-    params: CreateBondingCurveParams
-  ): Promise<ServiceResponse<{ tx: string; mintAddress: string }>> {
+  async createBondingCurve(params: CreateBondingCurveParams): Promise<
+    ServiceResponse<{
+      tx: string;
+      tokenMintAddress: string;
+      baseMintAddress: string;
+    }>
+  > {
     try {
       const creator = this.provider.wallet.publicKey;
-      const mint = this.findMintPda(params.name, creator);
-      const curve = this.findCurvePda(mint);
-      const vault = this.findVaultPda(mint);
-      const proposal = this.findProposalPda(mint);
+      const tokenMint = this.findMintPda(params.name, creator);
+      const curve = this.findCurvePda(tokenMint);
+      const vault = this.findVaultPda(tokenMint);
+      const proposal = this.findProposalPda(tokenMint);
       const globalPda = this.findGlobalPda();
-      const metadata = this.findMetadataPda(mint);
+      const metadata = this.findMetadataPda(tokenMint);
 
       // upload metadata if provided
       let uri = ``;
@@ -211,7 +216,7 @@ export class BondingCurveService {
             params.buff instanceof ArrayBuffer
               ? new Uint8Array(params.buff)
               : params.buff,
-            mint.toString()
+            tokenMint.toString()
           );
           const umi = createUmi(this.provider.connection).use(irysUploader());
           const kp = umi.eddsa.createKeypairFromSecretKey(
@@ -221,44 +226,61 @@ export class BondingCurveService {
           [uri] = await umi.uploader.upload([file]);
         } catch (uerr) {
           // fallback to provided uri
+          const umi = createUmi(this.provider.connection).use(mockStorage());
+          const kp = umi.eddsa.createKeypairFromSecretKey(
+            this.provider.wallet.payer!.secretKey!
+          );
+          umi.use(signerIdentity(createSignerFromKeypair(umi, kp)));
+          const file = createGenericFile(
+            params.buff instanceof ArrayBuffer
+              ? new Uint8Array(params.buff)
+              : params.buff,
+            tokenMint.toString()
+          );
+          [uri] = await umi.uploader.upload([file]);
         }
       }
 
       const scaledTokenTotalSupply = params.tokenTotalSupply.mul(
-        new BN(10).pow(new BN(params.mintDecimals))
+        new BN(10).pow(new BN(params.tokenDecimals))
       );
-      const scaledSolRaiseTarget = params.solRaiseTarget.mul(
-        new BN(LAMPORTS_PER_SOL)
+      const scaledBaseRaiseTarget = params.baseRaiseTarget.mul(
+        new BN(10).pow(new BN(params.baseDecimals))
       );
 
-      const vaultTokenAccount = this.getAssociatedTokenAddress(mint, vault);
+      const vaultTokenAccount = this.getAssociatedTokenAddress(
+        tokenMint,
+        vault
+      );
       const tx = await this.program.methods
         .createBondingCurve({
           name: params.name,
           symbol: params.symbol,
-          uri,
-          solRaiseTarget: scaledSolRaiseTarget,
-          decimals: params.mintDecimals,
-          tokenTotalSupply: scaledTokenTotalSupply,
           description: params.description,
-          treasuryAddress: params.treasuryAddress,
-          authorityAddress: params.authorityAddress,
+          baseRaiseTarget: scaledBaseRaiseTarget,
+          tokenDecimals: params.tokenDecimals,
+          baseDecimals: params.baseDecimals,
+          tokenTotalSupply: scaledTokenTotalSupply ?? null,
           twitterHandle: params.twitterHandle ?? null,
           discordLink: params.discordLink ?? null,
           websiteUrl: params.websiteUrl ?? null,
-          logoUri: params.logoUri ?? null,
+          uri: uri ?? null,
+          logoUri: uri ?? null,
+          authorityAddress: params.authorityAddress ?? null,
+          bullishThesis: params.bullishThesis ?? null,
           founderName: params.founderName ?? null,
           founderTwitter: params.founderTwitter ?? null,
-          bullishThesis: params.bullishThesis ?? null,
+          treasuryAddress: params.treasuryAddress,
         })
         .accountsPartial({
-          mint,
+          tokenMint: tokenMint,
           creator,
           bondingCurve: curve,
           bondingCurveVault: vault,
           proposal,
           bondingCurveTokenAccount: vaultTokenAccount,
           global: globalPda,
+          baseMint: params.baseMint,
           metadata,
           systemProgram: web3.SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -270,7 +292,11 @@ export class BondingCurveService {
 
       return {
         success: true,
-        data: { tx, mintAddress: mint.toBase58() },
+        data: {
+          tx,
+          tokenMintAddress: tokenMint.toBase58(),
+          baseMintAddress: params.baseMint.toBase58(),
+        },
       };
     } catch (error: any) {
       return {
@@ -292,7 +318,11 @@ export class BondingCurveService {
       const vault = this.findVaultPda(mint);
       const proposal = this.findProposalPda(mint);
       const curveStateRes = await this.getBondingCurve(mint);
-      if (!curveStateRes.success) {
+      const globalState: any = await this.program.account.global.fetch(
+        globalPda
+      );
+      const feeReceiver = globalState.feeReceiver;
+      if (!curveStateRes.success || !curveStateRes.data) {
         return {
           success: false,
           error: { message: `Curve not found`, details: null },
@@ -301,11 +331,18 @@ export class BondingCurveService {
       const curveState = curveStateRes.data;
       const vaultTokenAccount = this.getAssociatedTokenAddress(mint, vault);
       const userTokenAccount = this.getAssociatedTokenAddress(mint, user);
-
-      const globalState: any = await this.program.account.global.fetch(
-        globalPda
+      const vaultBaseAccount = this.getAssociatedTokenAddress(
+        curveState.baseMint,
+        vault
       );
-      const feeReceiver = globalState.feeReceiver;
+      const userBaseAccount = this.getAssociatedTokenAddress(
+        curveState.baseMint,
+        user
+      );
+      const feeReceiverBaseAccount = this.getAssociatedTokenAddress(
+        curveState.baseMint,
+        feeReceiver
+      );
 
       // increase compute units
       const computeIx = web3.ComputeBudgetProgram.setComputeUnitLimit({
@@ -317,9 +354,13 @@ export class BondingCurveService {
         scaledAmountIn = scaledAmountIn.mul(
           new BN(10).pow(new BN(curveState!.tokenDecimals))
         );
-        scaledMinOutAmount = scaledMinOutAmount.mul(new BN(LAMPORTS_PER_SOL));
+        scaledMinOutAmount = scaledMinOutAmount.mul(
+          new BN(10).pow(new BN(curveState!.baseDecimals))
+        );
       } else {
-        scaledAmountIn = scaledAmountIn.mul(new BN(LAMPORTS_PER_SOL));
+        scaledAmountIn = scaledAmountIn.mul(
+          new BN(10).pow(new BN(curveState!.baseDecimals))
+        );
         scaledMinOutAmount = scaledMinOutAmount.mul(
           new BN(10).pow(new BN(curveState!.tokenDecimals))
         );
@@ -335,10 +376,14 @@ export class BondingCurveService {
           user,
           global: globalPda,
           feeReceiver,
-          mint,
+          tokenMint: mint,
           bondingCurve: curve,
           bondingCurveVault: vault,
+          baseMint: curveState!.baseMint,
           bondingCurveTokenAccount: vaultTokenAccount,
+          bondingCurveBaseAccount: vaultBaseAccount,
+          userBaseAccount: userBaseAccount,
+          feeReceiverBaseAccount,
           userTokenAccount,
           proposal,
           systemProgram: web3.SystemProgram.programId,
@@ -435,13 +480,13 @@ export class BondingCurveService {
       ).map((p) => p.account);
       const data: BondingCurveAndProposalData[] = await Promise.all(
         allTokensOnCurve.map(async (curve) => {
-          const proposalPda = this.findProposalPda(curve.mint);
+          const proposalPda = this.findProposalPda(curve.tokenMint);
           const proposal = await this.program.account.proposal.fetch(
             proposalPda
           );
-          const metadata = await this.getMetadata(curve.mint);
+          const metadata = await this.getMetadata(curve.tokenMint);
           return {
-            mint: curve.mint,
+            mint: curve.tokenMint,
             bondingCurve: curve,
             proposal,
             metadata,
@@ -458,11 +503,11 @@ export class BondingCurveService {
   }
 
   /**
-   * Simulate buying tokens with SOL without executing a transaction
+   * Simulate buying tokens with base token without executing a transaction
    */
   async simulateBuy(
     mint: PublicKey,
-    solAmount: BN,
+    baseAmount: BN,
     slippageTolerance: number = 0.5
   ): Promise<
     ServiceResponse<{
@@ -472,6 +517,7 @@ export class BondingCurveService {
       fee: BN;
       willComplete: boolean;
       tokenDecimals: number;
+      baseDecimals: number;
       spotPrice: BN;
       pricePerToken: number;
     }>
@@ -490,50 +536,72 @@ export class BondingCurveService {
       }
 
       const curve = curveResult.data;
+      const currentTime = Math.floor(Date.now() / 1000);
+      // Calculate fee on input base token
+      const fee = this._calculateFee(
+        curve.startTime.toNumber(),
+        baseAmount,
+        currentTime
+      );
+      const netBase = baseAmount.sub(fee);
 
       // Check if this purchase would complete the bonding curve
-      const willComplete = this._willCompleteBondingCurve(curve, solAmount);
+      const willComplete = this._willCompleteBondingCurve(curve, netBase);
 
       // If purchase would exceed token reserves, adjust accordingly
-      let adjustedSolAmount = solAmount;
+      let adjustedBaseAmount = netBase;
       let tokensReceived: BN;
 
-      if (willComplete && this._wouldExceedTokenReserves(curve, solAmount)) {
+      if (willComplete && this._wouldExceedTokenReserves(curve, netBase)) {
         // Last buy case: buy all remaining tokens
         tokensReceived = new BN(curve.realTokenReserves.toString());
-
-        // Calculate exact SOL needed for these tokens
-        adjustedSolAmount = this._getSolForExactTokens(
-          curve.virtualSolReserves,
+        // Calculate exact net base needed for these tokens
+        adjustedBaseAmount = this._getBaseForExactTokens(
+          curve.virtualBaseReserves,
           curve.virtualTokenReserves,
           tokensReceived
         );
-      } else {
-        // Normal case: calculate tokens for given SOL
-        tokensReceived = this._getTokensForBuySol(
-          curve.virtualSolReserves,
+        // Calculate gross base needed (reverse fee math)
+        const grossBase = this._grossAmountFromNet(
+          adjustedBaseAmount,
+          curve.startTime.toNumber(),
+          currentTime
+        );
+        // Recalculate fee for this gross amount
+        const newFee = this._calculateFee(
+          curve.startTime.toNumber(),
+          grossBase,
+          currentTime
+        );
+        // Use these for reporting
+        adjustedBaseAmount = grossBase.sub(newFee);
+        tokensReceived = this._getTokensForBuyBase(
+          curve.virtualBaseReserves,
           curve.virtualTokenReserves,
-          solAmount
+          adjustedBaseAmount
+        );
+      } else {
+        // Normal case: calculate tokens for given net base
+        tokensReceived = this._getTokensForBuyBase(
+          curve.virtualBaseReserves,
+          curve.virtualTokenReserves,
+          netBase
         );
       }
 
-      // Calculate fee
-      const currentTime = Math.floor(Date.now() / 1000);
-      const fee = this._calculateFee(
-        curve.startTime.toNumber(),
-        adjustedSolAmount,
-        currentTime
-      );
-
       // Calculate price impact using virtual reserves
-      const virtualSol = curve.virtualSolReserves;
+      const virtualBase = curve.virtualBaseReserves;
       const virtualToken = curve.virtualTokenReserves;
-
-      const spotPrice = this._calculateSpotPrice(virtualSol, virtualToken);
-      const executionPrice = adjustedSolAmount
+      const spotPrice = this._calculateSpotPrice(
+        virtualBase,
+        virtualToken,
+        curve.baseDecimals,
+        curve.tokenDecimals
+      );
+      const executionPrice = adjustedBaseAmount
         .mul(new BN(10 ** curve.tokenDecimals))
-        .div(tokensReceived);
-
+        .div(tokensReceived)
+        .div(new BN(10 ** curve.baseDecimals));
       const priceImpactPercent = this._calculatePriceImpact(
         spotPrice,
         executionPrice
@@ -545,16 +613,17 @@ export class BondingCurveService {
         .mul(new BN(10000 - slippageBps))
         .div(new BN(10000));
 
-      // Calculate price per token in SOL
+      // Calculate price per token in base
       const tokenDecimalsFactor = Math.pow(10, curve.tokenDecimals);
-      const solInDecimal = adjustedSolAmount
-        .div(new BN(LAMPORTS_PER_SOL))
+      const baseDecimalsFactor = Math.pow(10, curve.baseDecimals);
+      const baseInDecimal = adjustedBaseAmount
+        .div(new BN(baseDecimalsFactor))
         .toNumber();
       const tokensInDecimal = tokensReceived
         .div(new BN(tokenDecimalsFactor))
         .toNumber();
       const pricePerToken =
-        tokensInDecimal > 0 ? solInDecimal / tokensInDecimal : 0;
+        tokensInDecimal > 0 ? baseInDecimal / tokensInDecimal : 0;
 
       return {
         success: true,
@@ -565,6 +634,7 @@ export class BondingCurveService {
           fee,
           willComplete,
           tokenDecimals: curve.tokenDecimals,
+          baseDecimals: curve.baseDecimals,
           spotPrice,
           pricePerToken,
         },
@@ -581,7 +651,7 @@ export class BondingCurveService {
   }
 
   /**
-   * Simulate selling tokens for SOL without executing a transaction
+   * Simulate selling tokens for base token without executing a transaction
    */
   async simulateSell(
     mint: PublicKey,
@@ -589,11 +659,12 @@ export class BondingCurveService {
     slippageTolerance: number = 0.5
   ): Promise<
     ServiceResponse<{
-      expectedSolAmount: BN;
-      minSolAmount: BN;
+      expectedBaseAmount: BN;
+      minBaseAmount: BN;
       priceImpact: number;
       fee: BN;
       tokenDecimals: number;
+      baseDecimals: number;
       spotPrice: BN;
       pricePerToken: number;
     }>
@@ -612,43 +683,43 @@ export class BondingCurveService {
       }
 
       const curve = curveResult.data;
-
-      // Calculate SOL received for tokenAmount
-      const solReceived = this._getSolForSellTokens(
-        curve.virtualSolReserves,
+      // Calculate gross base out for tokenAmount
+      const grossBase = this._getBaseForSellTokens(
+        curve.virtualBaseReserves,
         curve.virtualTokenReserves,
         tokenAmount
       );
-
-      if (solReceived.gt(curve.realSolReserves)) {
+      if (grossBase.gt(curve.realBaseReserves)) {
         return {
           success: false,
           error: {
-            message: "Not enough SOL reserves to fulfill sell request",
+            message: "Not enough base token reserves to fulfill sell request",
             details: null,
           },
         };
       }
-
-      // Calculate fee (on output SOL)
+      // Calculate fee on output base
       const currentTime = Math.floor(Date.now() / 1000);
       const fee = this._calculateFee(
         curve.startTime.toNumber(),
-        solReceived,
+        grossBase,
         currentTime
       );
-
-      const netSolReceived = solReceived.sub(fee);
+      const netBase = grossBase.sub(fee);
 
       // Calculate price impact
-      const virtualSol = curve.virtualSolReserves;
+      const virtualBase = curve.virtualBaseReserves;
       const virtualToken = curve.virtualTokenReserves;
-
-      const spotPrice = this._calculateSpotPrice(virtualSol, virtualToken);
-      const executionPrice = netSolReceived
+      const spotPrice = this._calculateSpotPrice(
+        virtualBase,
+        virtualToken,
+        curve.baseDecimals,
+        curve.tokenDecimals
+      );
+      const executionPrice = grossBase
         .mul(new BN(10 ** curve.tokenDecimals))
-        .div(tokenAmount);
-
+        .div(tokenAmount)
+        .div(new BN(10 ** curve.baseDecimals));
       const priceImpactPercent = this._calculatePriceImpact(
         spotPrice,
         executionPrice
@@ -656,29 +727,29 @@ export class BondingCurveService {
 
       // Apply slippage tolerance to net output
       const slippageBps = Math.floor(slippageTolerance * 100);
-      const minSolAmount = netSolReceived
+      const minBaseAmount = netBase
         .mul(new BN(10000 - slippageBps))
         .div(new BN(10000));
 
-      // Calculate price per token in SOL
+      // Calculate price per token in base
       const tokenDecimalsFactor = Math.pow(10, curve.tokenDecimals);
-      const solInDecimal = netSolReceived
-        .div(new BN(LAMPORTS_PER_SOL))
-        .toNumber();
+      const baseDecimalsFactor = Math.pow(10, curve.baseDecimals);
+      const baseInDecimal = netBase.div(new BN(baseDecimalsFactor)).toNumber();
       const tokensInDecimal = tokenAmount
         .div(new BN(tokenDecimalsFactor))
         .toNumber();
       const pricePerToken =
-        tokensInDecimal > 0 ? solInDecimal / tokensInDecimal : 0;
+        tokensInDecimal > 0 ? baseInDecimal / tokensInDecimal : 0;
 
       return {
         success: true,
         data: {
-          expectedSolAmount: netSolReceived,
-          minSolAmount,
+          expectedBaseAmount: netBase,
+          minBaseAmount,
           priceImpact: priceImpactPercent,
           fee,
           tokenDecimals: curve.tokenDecimals,
+          baseDecimals: curve.baseDecimals,
           spotPrice,
           pricePerToken,
         },
@@ -699,7 +770,7 @@ export class BondingCurveService {
    */
   async calculateMaxBuy(mint: PublicKey): Promise<
     ServiceResponse<{
-      maxSolAmount: BN;
+      maxBaseAmount: BN;
       tokenAmount: BN;
       willComplete: boolean;
       completionReason: string;
@@ -719,13 +790,11 @@ export class BondingCurveService {
       }
 
       const curve = curveResult.data;
-
       // Get remaining tokens
       const remainingTokens = curve.realTokenReserves;
-
-      // Calculate SOL needed to buy all remaining tokens
-      const maxSolAmount = this._getSolForExactTokens(
-        curve.virtualSolReserves,
+      // Calculate base needed to buy all remaining tokens
+      const maxBaseAmount = this._getBaseForExactTokens(
+        curve.virtualBaseReserves,
         curve.virtualTokenReserves,
         remainingTokens
       );
@@ -734,20 +803,20 @@ export class BondingCurveService {
       let willComplete = true;
       let completionReason = "Would purchase all remaining tokens";
 
-      if (curve.solRaiseTarget.gt(new BN(0))) {
-        const solToRaiseTarget = curve.solRaiseTarget.sub(
-          curve.realSolReserves
+      if (curve.baseRaiseTarget && curve.baseRaiseTarget.gt(new BN(0))) {
+        const baseToRaiseTarget = curve.baseRaiseTarget.sub(
+          curve.realBaseReserves
         );
-        if (solToRaiseTarget.lt(maxSolAmount)) {
+        if (baseToRaiseTarget.lt(maxBaseAmount)) {
           // We'd hit the raise target first
-          completionReason = "Would reach SOL raise target";
+          completionReason = "Would reach base raise target";
         }
       }
 
       return {
         success: true,
         data: {
-          maxSolAmount,
+          maxBaseAmount,
           tokenAmount: remainingTokens,
           willComplete,
           completionReason,
@@ -768,175 +837,35 @@ export class BondingCurveService {
   /**
    * Check if buying a specific amount of tokens would complete the bonding curve
    */
-  private _willCompleteBondingCurve(bondingCurve: any, solAmount: BN): boolean {
+  private _willCompleteBondingCurve(
+    bondingCurve: any,
+    baseAmount: BN
+  ): boolean {
     // Case 1: Check if the purchase would exceed SOL raise target
     if (bondingCurve.solRaiseTarget.gt(new BN(0))) {
-      const potentialSolReserves = bondingCurve.realSolReserves.add(solAmount);
+      const potentialSolReserves = bondingCurve.realSolReserves.add(baseAmount);
       if (potentialSolReserves.gte(bondingCurve.solRaiseTarget)) {
         return true;
       }
     }
 
     // Case 2: Check if the purchase would buy all remaining tokens
-    return this._wouldExceedTokenReserves(bondingCurve, solAmount);
+    return this._wouldExceedTokenReserves(bondingCurve, baseAmount);
   }
 
   /**
    * Check if buying this much SOL would exceed the available token reserves
    */
-  private _wouldExceedTokenReserves(bondingCurve: any, solAmount: BN): boolean {
-    const tokensReceived = this._getTokensForBuySol(
-      bondingCurve.virtualSolReserves,
+  private _wouldExceedTokenReserves(
+    bondingCurve: any,
+    baseAmount: BN
+  ): boolean {
+    const tokensReceived = this._getTokensForBuyBase(
+      bondingCurve.virtualBaseReserves,
       bondingCurve.virtualTokenReserves,
-      solAmount
+      baseAmount
     );
     return tokensReceived.gte(bondingCurve.realTokenReserves);
-  }
-
-  /**
-   * Calculate the spot price (SOL per token) based on virtual reserves
-   */
-  private _calculateSpotPrice(virtualSol: BN, virtualToken: BN): BN {
-    // Convert to strings and then to BigInts for precision
-    const solBigInt = BigInt(virtualSol.toString());
-    const tokenBigInt = BigInt(virtualToken.toString());
-
-    // Calculate with maximum precision, then convert back to BN
-    // Formula: virtual_sol_reserves / virtual_token_reserves
-    const result = (solBigInt * BigInt(LAMPORTS_PER_SOL)) / tokenBigInt;
-    return new BN(result.toString());
-  }
-
-  /**
-   * Calculate price impact percentage
-   */
-  private _calculatePriceImpact(spotPrice: BN, executionPrice: BN): number {
-    // Convert to BigInts for precision
-    const spotBigInt = BigInt(spotPrice.toString());
-    const execBigInt = BigInt(executionPrice.toString());
-
-    // Calculate price impact: (executionPrice / spotPrice - 1) * 100
-    if (spotBigInt === BigInt(0)) return 0;
-
-    const impactBigInt =
-      (execBigInt * BigInt(10000)) / spotBigInt - BigInt(10000);
-    return Number(impactBigInt) / 100;
-  }
-
-  /**
-   * Implementation of the get_tokens_for_buy_sol function
-   */
-  private _getTokensForBuySol(
-    virtualSolReserves: BN,
-    virtualTokenReserves: BN,
-    solAmount: BN
-  ): BN {
-    if (solAmount.isZero()) {
-      throw new Error("SOL amount cannot be zero");
-    }
-
-    try {
-      // Convert to strings then BigInts for precision (simulating u128 behavior)
-      const solReservesBigInt = BigInt(virtualSolReserves.toString());
-      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
-      const solAmountBigInt = BigInt(solAmount.toString());
-
-      // Calculate constant k = virtual_sol * virtual_token
-      const k = solReservesBigInt * tokenReservesBigInt;
-
-      // Calculate new virtual SOL reserves
-      const newVirtualSolReserves = solReservesBigInt + solAmountBigInt;
-
-      // Calculate new virtual token reserves: k / new_sol_reserves
-      const newVirtualTokenReserves = k / newVirtualSolReserves;
-
-      // Calculate tokens received
-      const tokensReceivedBigInt =
-        tokenReservesBigInt - newVirtualTokenReserves;
-
-      return new BN(tokensReceivedBigInt.toString());
-    } catch (error) {
-      console.error("Error calculating tokens for SOL:", error);
-      throw new Error("Failed to calculate token amount");
-    }
-  }
-
-  /**
-   * Implementation of the get_sol_for_sell_tokens function
-   */
-  private _getSolForSellTokens(
-    virtualSolReserves: BN,
-    virtualTokenReserves: BN,
-    tokenAmount: BN
-  ): BN {
-    if (tokenAmount.isZero()) {
-      throw new Error("Token amount cannot be zero");
-    }
-
-    try {
-      // Convert to BigInts for precision (simulating u128 behavior)
-      const solReservesBigInt = BigInt(virtualSolReserves.toString());
-      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
-      const tokenAmountBigInt = BigInt(tokenAmount.toString());
-
-      // Calculate constant k = virtual_sol * virtual_token
-      const k = solReservesBigInt * tokenReservesBigInt;
-
-      // Calculate new virtual token reserves
-      const newVirtualTokenReserves = tokenReservesBigInt + tokenAmountBigInt;
-
-      // Calculate new virtual SOL reserves: k / new_token_reserves
-      const newVirtualSolReserves = k / newVirtualTokenReserves;
-
-      // Calculate SOL received
-      const solReceivedBigInt = solReservesBigInt - newVirtualSolReserves;
-
-      return new BN(solReceivedBigInt.toString());
-    } catch (error) {
-      console.error("Error calculating SOL for tokens:", error);
-      throw new Error("Failed to calculate SOL amount");
-    }
-  }
-
-  /**
-   * Implementation of the get_sol_for_exact_tokens function
-   */
-  private _getSolForExactTokens(
-    virtualSolReserves: BN,
-    virtualTokenReserves: BN,
-    tokenAmount: BN
-  ): BN {
-    if (tokenAmount.isZero()) {
-      throw new Error("Token amount cannot be zero");
-    }
-
-    try {
-      // Convert to BigInts for precision (simulating u128 behavior)
-      const solReservesBigInt = BigInt(virtualSolReserves.toString());
-      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
-      const tokenAmountBigInt = BigInt(tokenAmount.toString());
-
-      // Calculate constant k = virtual_sol * virtual_token
-      const k = solReservesBigInt * tokenReservesBigInt;
-
-      // Calculate new virtual token reserves after removing tokens
-      const newVirtualTokenReserves = tokenReservesBigInt - tokenAmountBigInt;
-
-      if (newVirtualTokenReserves <= BigInt(0)) {
-        throw new Error("Token amount exceeds virtual token reserves");
-      }
-
-      // Calculate new virtual SOL reserves: k / new_token_reserves
-      const newVirtualSolReserves = k / newVirtualTokenReserves;
-
-      // Calculate SOL needed
-      const solNeededBigInt = newVirtualSolReserves - solReservesBigInt;
-
-      return new BN(solNeededBigInt.toString());
-    } catch (error) {
-      console.error("Error calculating SOL for exact tokens:", error);
-      throw new Error("Failed to calculate SOL amount");
-    }
   }
 
   /**
@@ -1048,6 +977,11 @@ export class BondingCurveService {
         creator
       );
 
+      const proposalBaseAccount = this.getAssociatedTokenAddress(
+        baseMint,
+        proposalData.authorityAddress
+      );
+
       // Create the transaction with increased compute units
       const computeIx = web3.ComputeBudgetProgram.setComputeUnitLimit({
         units: 1_000_000,
@@ -1064,8 +998,8 @@ export class BondingCurveService {
           baseMint,
           bondingCurve: curve,
           bondingCurveTokenAccount,
-          bondingCurveBaseTokenAccount,
-          proposal,
+          bondingCurveBaseAccount: bondingCurveBaseTokenAccount,
+          proposalBaseAccount: proposalBaseAccount,
           proposalTreasury: treasuryAddress,
           proposalAuthority: authorityAddress,
           proposalTokenAccount,
@@ -1074,6 +1008,7 @@ export class BondingCurveService {
           authority,
           poolState,
           lpMint,
+          proposal,
           bondingCurveLpToken,
           token0Vault,
           token1Vault,
@@ -1127,5 +1062,125 @@ export class BondingCurveService {
         },
       };
     }
+  }
+
+  // Add/rename helpers for base-token math
+  private _getTokensForBuyBase(
+    virtualBaseReserves: BN,
+    virtualTokenReserves: BN,
+    baseAmount: BN
+  ): BN {
+    if (baseAmount.isZero()) {
+      throw new Error("Base amount cannot be zero");
+    }
+    try {
+      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
+      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
+      const baseAmountBigInt = BigInt(baseAmount.toString());
+      const k = baseReservesBigInt * tokenReservesBigInt;
+      const newVirtualBaseReserves = baseReservesBigInt + baseAmountBigInt;
+      const newVirtualTokenReserves = k / newVirtualBaseReserves;
+      const tokensReceivedBigInt =
+        tokenReservesBigInt - newVirtualTokenReserves;
+      return new BN(tokensReceivedBigInt.toString());
+    } catch (error) {
+      throw new Error("Failed to calculate token amount");
+    }
+  }
+
+  private _getBaseForSellTokens(
+    virtualBaseReserves: BN,
+    virtualTokenReserves: BN,
+    tokenAmount: BN
+  ): BN {
+    if (tokenAmount.isZero()) {
+      throw new Error("Token amount cannot be zero");
+    }
+    try {
+      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
+      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
+      const tokenAmountBigInt = BigInt(tokenAmount.toString());
+      const k = baseReservesBigInt * tokenReservesBigInt;
+      const newVirtualTokenReserves = tokenReservesBigInt + tokenAmountBigInt;
+      const newVirtualBaseReserves = k / newVirtualTokenReserves;
+      const baseReceivedBigInt = baseReservesBigInt - newVirtualBaseReserves;
+      return new BN(baseReceivedBigInt.toString());
+    } catch (error) {
+      throw new Error("Failed to calculate base amount");
+    }
+  }
+
+  private _getBaseForExactTokens(
+    virtualBaseReserves: BN,
+    virtualTokenReserves: BN,
+    tokenAmount: BN
+  ): BN {
+    if (tokenAmount.isZero()) {
+      throw new Error("Token amount cannot be zero");
+    }
+    try {
+      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
+      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
+      const tokenAmountBigInt = BigInt(tokenAmount.toString());
+      const k = baseReservesBigInt * tokenReservesBigInt;
+      const newVirtualTokenReserves = tokenReservesBigInt - tokenAmountBigInt;
+      if (newVirtualTokenReserves <= BigInt(0)) {
+        throw new Error("Token amount exceeds virtual token reserves");
+      }
+      const newVirtualBaseReserves = k / newVirtualTokenReserves;
+      const baseNeededBigInt = newVirtualBaseReserves - baseReservesBigInt;
+      return new BN(baseNeededBigInt.toString());
+    } catch (error) {
+      throw new Error("Failed to calculate base amount");
+    }
+  }
+
+  private _grossAmountFromNet(
+    net: BN,
+    startTime: number,
+    currentTime: number
+  ): BN {
+    const feeBps = this._getFeeBps(startTime, currentTime);
+    const denominator = 10000 - feeBps;
+    return net.mul(new BN(10000)).div(new BN(denominator));
+  }
+
+  private _getFeeBps(startTime: number, currentTime: number): number {
+    if (currentTime < startTime) return 0;
+    const timeDiff = Math.max(0, currentTime - startTime);
+    const slotsPassed = Math.floor(timeDiff / 400);
+    let feeBps: number;
+    if (slotsPassed < 150) {
+      feeBps = 9900; // 99%
+    } else if (slotsPassed >= 150 && slotsPassed <= 250) {
+      const feeBpsRaw = (-8_300_000 * slotsPassed + 2_162_600_000) / 1_000_000;
+      feeBps = Math.max(0, Math.min(10000, feeBpsRaw));
+    } else {
+      feeBps = 100; // 1%
+    }
+    return feeBps;
+  }
+
+  private _calculateSpotPrice(
+    virtualBase: BN,
+    virtualToken: BN,
+    baseDecimals: number,
+    tokenDecimals: number
+  ): BN {
+    const baseBigInt = BigInt(virtualBase.toString());
+    const tokenBigInt = BigInt(virtualToken.toString());
+    const result =
+      (baseBigInt * BigInt(10 ** tokenDecimals)) /
+      (tokenBigInt * BigInt(10 ** baseDecimals));
+    return new BN(result.toString());
+  }
+
+  private _calculatePriceImpact(spotPrice: BN, executionPrice: BN): number {
+    const spotBigInt = BigInt(spotPrice.toString());
+    const execBigInt = BigInt(executionPrice.toString());
+    if (spotBigInt === BigInt(0)) return 0;
+    const impactBigInt =
+      (execBigInt * BigInt(10000)) / spotBigInt - BigInt(10000);
+    return Number(impactBigInt) / 100;
   }
 }

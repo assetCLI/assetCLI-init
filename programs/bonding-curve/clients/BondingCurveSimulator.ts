@@ -1,6 +1,5 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 
 /**
  * Client for simulating bonding curve swaps without executing on-chain transactions
@@ -27,11 +26,11 @@ export class BondingCurveSimulator {
   }
 
   /**
-   * Simulate buying tokens with SOL without executing a transaction
+   * Simulate buying tokens with base token (fee is deducted from input before curve math)
    */
   async simulateBuy(
     bondingCurve: any,
-    solAmount: BN,
+    baseAmount: BN,
     slippageTolerance: number = 0.5
   ): Promise<{
     expectedTokenAmount: BN;
@@ -40,48 +39,76 @@ export class BondingCurveSimulator {
     fee: BN;
     willComplete: boolean;
   }> {
-    // Check if this purchase would complete the bonding curve
-    const willComplete = this.willCompleteBondingCurve(bondingCurve, solAmount);
-    
-    // If purchase would exceed token reserves, adjust accordingly
-    let adjustedSolAmount = solAmount;
-    let tokensReceived: BN;
-    
-    if (willComplete && this.wouldExceedTokenReserves(bondingCurve, solAmount)) {
-      // Last buy case: buy all remaining tokens
-      tokensReceived = new BN(bondingCurve.realTokenReserves.toString());
-      
-      // Calculate exact SOL needed for these tokens
-      adjustedSolAmount = this.getSolForExactTokens(
-        bondingCurve.virtualSolReserves,
-        bondingCurve.virtualTokenReserves,
-        tokensReceived
-      );
-    } else {
-      // Normal case: calculate tokens for given SOL
-      tokensReceived = this.getTokensForBuySol(
-        bondingCurve.virtualSolReserves,
-        bondingCurve.virtualTokenReserves,
-        solAmount
-      );
-    }
-
-    // Calculate fee
+    // Calculate fee on input base token
     const currentTime = Math.floor(Date.now() / 1000);
     const fee = this.calculateFee(
       bondingCurve.startTime.toNumber(),
-      adjustedSolAmount,
+      baseAmount,
       currentTime
     );
+    const netBase = baseAmount.sub(fee);
+
+    // Check if this purchase would complete the bonding curve
+    const willComplete = this.willCompleteBondingCurve(bondingCurve, netBase);
+
+    // If purchase would exceed token reserves, adjust accordingly
+    let adjustedBaseAmount = netBase;
+    let tokensReceived: BN;
+
+    if (willComplete && this.wouldExceedTokenReserves(bondingCurve, netBase)) {
+      // Last buy case: buy all remaining tokens
+      tokensReceived = new BN(bondingCurve.realTokenReserves.toString());
+      // Calculate exact net base needed for these tokens
+      adjustedBaseAmount = this.getBaseForExactTokens(
+        bondingCurve.virtualBaseReserves,
+        bondingCurve.virtualTokenReserves,
+        tokensReceived
+      );
+      // Calculate gross base needed (reverse fee math)
+      baseAmount = this.grossAmountFromNet(
+        adjustedBaseAmount,
+        bondingCurve.startTime.toNumber(),
+        currentTime
+      );
+      // Recalculate fee for this gross amount
+      const newFee = this.calculateFee(
+        bondingCurve.startTime.toNumber(),
+        baseAmount,
+        currentTime
+      );
+      // Use these for reporting
+      adjustedBaseAmount = baseAmount.sub(newFee);
+      tokensReceived = this.getTokensForBuyBase(
+        bondingCurve.virtualBaseReserves,
+        bondingCurve.virtualTokenReserves,
+        adjustedBaseAmount
+      );
+    } else {
+      // Normal case: calculate tokens for given net base
+      tokensReceived = this.getTokensForBuyBase(
+        bondingCurve.virtualBaseReserves,
+        bondingCurve.virtualTokenReserves,
+        netBase
+      );
+    }
 
     // Calculate price impact using virtual reserves (matches Rust implementation)
-    const virtualSol = bondingCurve.virtualSolReserves;
+    const virtualBase = bondingCurve.virtualBaseReserves;
     const virtualToken = bondingCurve.virtualTokenReserves;
-    
-    const spotPrice = this.calculateSpotPrice(virtualSol, virtualToken);
-    const executionPrice = new BN(adjustedSolAmount).mul(new BN(10**bondingCurve.tokenDecimals)).div(tokensReceived);
-    
-    const priceImpactPercent = this.calculatePriceImpact(spotPrice, executionPrice);
+    const spotPrice = this.calculateSpotPrice(
+      virtualBase,
+      virtualToken,
+      bondingCurve.baseDecimals,
+      bondingCurve.tokenDecimals
+    );
+    const executionPrice = adjustedBaseAmount
+      .mul(new BN(10 ** bondingCurve.tokenDecimals))
+      .div(tokensReceived)
+      .div(new BN(10 ** bondingCurve.baseDecimals));
+    const priceImpactPercent = this.calculatePriceImpact(
+      spotPrice,
+      executionPrice
+    );
 
     // Apply slippage tolerance
     const slippageBps = Math.floor(slippageTolerance * 100);
@@ -99,55 +126,63 @@ export class BondingCurveSimulator {
   }
 
   /**
-   * Simulate selling tokens for SOL without executing a transaction
+   * Simulate selling tokens for base token (fee is deducted from output after curve math)
    */
   async simulateSell(
     bondingCurve: any,
     tokenAmount: BN,
     slippageTolerance: number = 0.5
   ): Promise<{
-    expectedSolAmount: BN;
-    minSolAmount: BN;
+    expectedBaseAmount: BN;
+    minBaseAmount: BN;
     priceImpact: number;
     fee: BN;
   }> {
-    // Check if the bonding curve has enough SOL to fulfill the sell request
-    const solReceived = this.getSolForSellTokens(
-      bondingCurve.virtualSolReserves,
+    // Calculate gross base out for tokenAmount
+    const grossBase = this.getBaseForSellTokens(
+      bondingCurve.virtualBaseReserves,
       bondingCurve.virtualTokenReserves,
       tokenAmount
     );
-
-    if (solReceived.gt(bondingCurve.realSolReserves)) {
-      throw new Error("Not enough SOL reserves to fulfill sell request");
+    if (grossBase.gt(bondingCurve.realBaseReserves)) {
+      throw new Error("Not enough base token reserves to fulfill sell request");
     }
-
-    // Calculate fee
+    // Calculate fee on output base
     const currentTime = Math.floor(Date.now() / 1000);
     const fee = this.calculateFee(
       bondingCurve.startTime.toNumber(),
-      solReceived,
+      grossBase,
       currentTime
     );
+    const netBase = grossBase.sub(fee);
 
     // Calculate price impact
-    const virtualSol = bondingCurve.virtualSolReserves;
+    const virtualBase = bondingCurve.virtualBaseReserves;
     const virtualToken = bondingCurve.virtualTokenReserves;
-    
-    const spotPrice = this.calculateSpotPrice(virtualSol, virtualToken);
-    const executionPrice = solReceived.mul(new BN(10**bondingCurve.tokenDecimals)).div(tokenAmount);
-    
-    const priceImpactPercent = this.calculatePriceImpact(spotPrice, executionPrice);
+    const spotPrice = this.calculateSpotPrice(
+      virtualBase,
+      virtualToken,
+      bondingCurve.baseDecimals,
+      bondingCurve.tokenDecimals
+    );
+    const executionPrice = grossBase
+      .mul(new BN(10 ** bondingCurve.tokenDecimals))
+      .div(tokenAmount)
+      .div(new BN(10 ** bondingCurve.baseDecimals));
+    const priceImpactPercent = this.calculatePriceImpact(
+      spotPrice,
+      executionPrice
+    );
 
     // Apply slippage tolerance
     const slippageBps = Math.floor(slippageTolerance * 100);
-    const minSolAmount = solReceived
+    const minBaseAmount = netBase
       .mul(new BN(10000 - slippageBps))
       .div(new BN(10000));
 
     return {
-      expectedSolAmount: solReceived,
-      minSolAmount,
+      expectedBaseAmount: netBase,
+      minBaseAmount,
       priceImpact: priceImpactPercent,
       fee,
     };
@@ -156,54 +191,59 @@ export class BondingCurveSimulator {
   /**
    * Check if buying a specific amount of tokens would complete the bonding curve
    */
-  willCompleteBondingCurve(bondingCurve: any, solAmount: BN): boolean {
-    // Case 1: Check if the purchase would exceed SOL raise target
-    if (bondingCurve.solRaiseTarget.gt(new BN(0))) {
-      const potentialSolReserves = bondingCurve.realSolReserves.add(solAmount);
-      if (potentialSolReserves.gte(bondingCurve.solRaiseTarget)) {
+  willCompleteBondingCurve(bondingCurve: any, baseAmount: BN): boolean {
+    // Case 1: Check if the purchase would exceed base raise target
+    if (bondingCurve.baseRaiseTarget.gt(new BN(0))) {
+      const potentialBaseReserves =
+        bondingCurve.realBaseReserves.add(baseAmount);
+      if (potentialBaseReserves.gte(bondingCurve.baseRaiseTarget)) {
         return true;
       }
     }
 
     // Case 2: Check if the purchase would buy all remaining tokens
-    return this.wouldExceedTokenReserves(bondingCurve, solAmount);
+    return this.wouldExceedTokenReserves(bondingCurve, baseAmount);
   }
 
   /**
-   * Check if buying this much SOL would exceed the available token reserves
+   * Check if buying this much base would exceed the available token reserves
    */
-  wouldExceedTokenReserves(bondingCurve: any, solAmount: BN): boolean {
-    const tokensReceived = this.getTokensForBuySol(
-      bondingCurve.virtualSolReserves,
+  wouldExceedTokenReserves(bondingCurve: any, baseAmount: BN): boolean {
+    const tokensReceived = this.getTokensForBuyBase(
+      bondingCurve.virtualBaseReserves,
       bondingCurve.virtualTokenReserves,
-      solAmount
+      baseAmount
     );
     return tokensReceived.gte(bondingCurve.realTokenReserves);
   }
 
   /**
-   * Calculate how much SOL would be needed to buy all remaining tokens
+   * Calculate how much base would be needed to buy all remaining tokens
    */
-  calculateSolForRemainingTokens(bondingCurve: any): BN {
+  calculateBaseForRemainingTokens(bondingCurve: any): BN {
     const remainingTokens = bondingCurve.realTokenReserves;
-    return this.getSolForExactTokens(
-      bondingCurve.virtualSolReserves,
+    return this.getBaseForExactTokens(
+      bondingCurve.virtualBaseReserves,
       bondingCurve.virtualTokenReserves,
       remainingTokens
     );
   }
 
   /**
-   * Calculate the spot price (SOL per token) based on virtual reserves
+   * Calculate the spot price (base per token) based on virtual reserves and decimals
    */
-  calculateSpotPrice(virtualSol: BN, virtualToken: BN): BN {
-    // Convert to strings and then to BigInts for precision
-    const solBigInt = BigInt(virtualSol.toString());
+  calculateSpotPrice(
+    virtualBase: BN,
+    virtualToken: BN,
+    baseDecimals: number,
+    tokenDecimals: number
+  ): BN {
+    const baseBigInt = BigInt(virtualBase.toString());
     const tokenBigInt = BigInt(virtualToken.toString());
-    
-    // Calculate with maximum precision, then convert back to BN
-    // Formula: virtual_sol_reserves / virtual_token_reserves
-    const result = (solBigInt * BigInt(10**9)) / tokenBigInt;
+    // Scale for decimals
+    const result =
+      (baseBigInt * BigInt(10 ** tokenDecimals)) /
+      (tokenBigInt * BigInt(10 ** baseDecimals));
     return new BN(result.toString());
   }
 
@@ -214,56 +254,58 @@ export class BondingCurveSimulator {
     // Convert to BigInts for precision
     const spotBigInt = BigInt(spotPrice.toString());
     const execBigInt = BigInt(executionPrice.toString());
-    
+
     // Calculate price impact: (executionPrice / spotPrice - 1) * 100
     if (spotBigInt === BigInt(0)) return 0;
-    
-    const impactBigInt = ((execBigInt * BigInt(10000)) / spotBigInt) - BigInt(10000);
+
+    const impactBigInt =
+      (execBigInt * BigInt(10000)) / spotBigInt - BigInt(10000);
     return Number(impactBigInt) / 100;
   }
 
   /**
-   * Implementation of the get_tokens_for_buy_sol function
+   * Implementation of the get_tokens_for_buy_base function
    */
-  private getTokensForBuySol(
-    virtualSolReserves: BN,
+  private getTokensForBuyBase(
+    virtualBaseReserves: BN,
     virtualTokenReserves: BN,
-    solAmount: BN
+    baseAmount: BN
   ): BN {
-    if (solAmount.isZero()) {
-      throw new Error("SOL amount cannot be zero");
+    if (baseAmount.isZero()) {
+      throw new Error("Base amount cannot be zero");
     }
 
     try {
       // Convert to strings then BigInts for precision (simulating u128 behavior)
-      const solReservesBigInt = BigInt(virtualSolReserves.toString());
+      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
       const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
-      const solAmountBigInt = BigInt(solAmount.toString());
+      const baseAmountBigInt = BigInt(baseAmount.toString());
 
-      // Calculate constant k = virtual_sol * virtual_token
-      const k = solReservesBigInt * tokenReservesBigInt;
+      // Calculate constant k = virtual_base * virtual_token
+      const k = baseReservesBigInt * tokenReservesBigInt;
 
-      // Calculate new virtual SOL reserves
-      const newVirtualSolReserves = solReservesBigInt + solAmountBigInt;
+      // Calculate new virtual base reserves
+      const newVirtualBaseReserves = baseReservesBigInt + baseAmountBigInt;
 
-      // Calculate new virtual token reserves: k / new_sol_reserves
-      const newVirtualTokenReserves = k / newVirtualSolReserves;
+      // Calculate new virtual token reserves: k / new_base_reserves
+      const newVirtualTokenReserves = k / newVirtualBaseReserves;
 
       // Calculate tokens received
-      const tokensReceivedBigInt = tokenReservesBigInt - newVirtualTokenReserves;
-      
+      const tokensReceivedBigInt =
+        tokenReservesBigInt - newVirtualTokenReserves;
+
       return new BN(tokensReceivedBigInt.toString());
     } catch (error) {
-      console.error("Error calculating tokens for SOL:", error);
+      console.error("Error calculating tokens for base:", error);
       throw new Error("Failed to calculate token amount");
     }
   }
 
   /**
-   * Implementation of the get_sol_for_sell_tokens function
+   * Implementation of the get_base_for_sell_tokens function
    */
-  private getSolForSellTokens(
-    virtualSolReserves: BN,
+  private getBaseForSellTokens(
+    virtualBaseReserves: BN,
     virtualTokenReserves: BN,
     tokenAmount: BN
   ): BN {
@@ -273,34 +315,34 @@ export class BondingCurveSimulator {
 
     try {
       // Convert to BigInts for precision (simulating u128 behavior)
-      const solReservesBigInt = BigInt(virtualSolReserves.toString());
+      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
       const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
       const tokenAmountBigInt = BigInt(tokenAmount.toString());
 
-      // Calculate constant k = virtual_sol * virtual_token
-      const k = solReservesBigInt * tokenReservesBigInt;
+      // Calculate constant k = virtual_base * virtual_token
+      const k = baseReservesBigInt * tokenReservesBigInt;
 
       // Calculate new virtual token reserves
       const newVirtualTokenReserves = tokenReservesBigInt + tokenAmountBigInt;
 
-      // Calculate new virtual SOL reserves: k / new_token_reserves
-      const newVirtualSolReserves = k / newVirtualTokenReserves;
+      // Calculate new virtual base reserves: k / new_token_reserves
+      const newVirtualBaseReserves = k / newVirtualTokenReserves;
 
-      // Calculate SOL received
-      const solReceivedBigInt = solReservesBigInt - newVirtualSolReserves;
-      
-      return new BN(solReceivedBigInt.toString());
+      // Calculate base received
+      const baseReceivedBigInt = baseReservesBigInt - newVirtualBaseReserves;
+
+      return new BN(baseReceivedBigInt.toString());
     } catch (error) {
-      console.error("Error calculating SOL for tokens:", error);
-      throw new Error("Failed to calculate SOL amount");
+      console.error("Error calculating base for tokens:", error);
+      throw new Error("Failed to calculate base amount");
     }
   }
 
   /**
-   * Implementation of the get_sol_for_exact_tokens function
+   * Implementation of the get_base_for_exact_tokens function
    */
-  private getSolForExactTokens(
-    virtualSolReserves: BN,
+  private getBaseForExactTokens(
+    virtualBaseReserves: BN,
     virtualTokenReserves: BN,
     tokenAmount: BN
   ): BN {
@@ -310,30 +352,30 @@ export class BondingCurveSimulator {
 
     try {
       // Convert to BigInts for precision (simulating u128 behavior)
-      const solReservesBigInt = BigInt(virtualSolReserves.toString());
+      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
       const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
       const tokenAmountBigInt = BigInt(tokenAmount.toString());
 
-      // Calculate constant k = virtual_sol * virtual_token
-      const k = solReservesBigInt * tokenReservesBigInt;
+      // Calculate constant k = virtual_base * virtual_token
+      const k = baseReservesBigInt * tokenReservesBigInt;
 
       // Calculate new virtual token reserves after removing tokens
       const newVirtualTokenReserves = tokenReservesBigInt - tokenAmountBigInt;
-      
+
       if (newVirtualTokenReserves <= BigInt(0)) {
         throw new Error("Token amount exceeds virtual token reserves");
       }
 
-      // Calculate new virtual SOL reserves: k / new_token_reserves
-      const newVirtualSolReserves = k / newVirtualTokenReserves;
+      // Calculate new virtual base reserves: k / new_token_reserves
+      const newVirtualBaseReserves = k / newVirtualTokenReserves;
 
-      // Calculate SOL needed
-      const solNeededBigInt = newVirtualSolReserves - solReservesBigInt;
-      
-      return new BN(solNeededBigInt.toString());
+      // Calculate base needed
+      const baseNeededBigInt = newVirtualBaseReserves - baseReservesBigInt;
+
+      return new BN(baseNeededBigInt.toString());
     } catch (error) {
-      console.error("Error calculating SOL for exact tokens:", error);
-      throw new Error("Failed to calculate SOL amount");
+      console.error("Error calculating base for exact tokens:", error);
+      throw new Error("Failed to calculate base amount");
     }
   }
 
@@ -364,9 +406,41 @@ export class BondingCurveSimulator {
     const amountBigInt = BigInt(amount.toString());
     const feeBigInt = (amountBigInt * BigInt(feeBps)) / BigInt(10000);
     const capBigInt = amountBigInt / BigInt(10);
-    
+
     const finalFeeBigInt = feeBigInt < capBigInt ? feeBigInt : capBigInt;
     return new BN(finalFeeBigInt.toString());
+  }
+
+  /**
+   * Helper to reverse fee math: get gross amount from net (for last buy case)
+   */
+  private grossAmountFromNet(
+    net: BN,
+    startTime: number,
+    currentTime: number
+  ): BN {
+    const feeBps = this.getFeeBps(startTime, currentTime);
+    const denominator = 10000 - feeBps;
+    return net.mul(new BN(10000)).div(new BN(denominator));
+  }
+
+  /**
+   * Helper to get fee bps (basis points) for a given time
+   */
+  private getFeeBps(startTime: number, currentTime: number): number {
+    if (currentTime < startTime) return 0;
+    const timeDiff = Math.max(0, currentTime - startTime);
+    const slotsPassed = Math.floor(timeDiff / 400);
+    let feeBps: number;
+    if (slotsPassed < 150) {
+      feeBps = 100; // 1%
+    } else if (slotsPassed >= 150 && slotsPassed <= 250) {
+      const feeBpsRaw = (-8_300_000 * slotsPassed + 2_162_600_000) / 1_000_000;
+      feeBps = Math.max(0, Math.min(10000, feeBpsRaw));
+    } else {
+      feeBps = 100; // 1%
+    }
+    return feeBps;
   }
 }
 

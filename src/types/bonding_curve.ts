@@ -714,11 +714,15 @@ export type BondingCurve = {
           "writable": true
         },
         {
-          "name": "tokenMint",
+          "name": "projectToken",
           "writable": true
         },
         {
-          "name": "baseMint",
+          "name": "token0Mint",
+          "writable": true
+        },
+        {
+          "name": "token1Mint",
           "writable": true
         },
         {
@@ -746,7 +750,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "tokenMint"
+                "path": "projectToken"
               }
             ]
           }
@@ -782,13 +786,13 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "tokenMint"
+                "path": "projectToken"
               }
             ]
           }
         },
         {
-          "name": "bondingCurveTokenAccount",
+          "name": "token0Account",
           "writable": true,
           "pda": {
             "seeds": [
@@ -835,7 +839,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "tokenMint"
+                "path": "token0Mint"
               }
             ],
             "program": {
@@ -878,7 +882,7 @@ export type BondingCurve = {
           }
         },
         {
-          "name": "bondingCurveBaseAccount",
+          "name": "token1Account",
           "writable": true,
           "pda": {
             "seeds": [
@@ -925,7 +929,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "baseMint"
+                "path": "token1Mint"
               }
             ],
             "program": {
@@ -986,7 +990,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "tokenMint"
+                "path": "projectToken"
               }
             ]
           }
@@ -1000,7 +1004,7 @@ export type BondingCurve = {
           "writable": true
         },
         {
-          "name": "proposalTokenAccount",
+          "name": "proposalToken0Account",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1047,7 +1051,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "tokenMint"
+                "path": "token0Mint"
               }
             ],
             "program": {
@@ -1090,7 +1094,7 @@ export type BondingCurve = {
           }
         },
         {
-          "name": "proposalBaseAccount",
+          "name": "proposalToken1Account",
           "writable": true,
           "pda": {
             "seeds": [
@@ -1137,7 +1141,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "baseMint"
+                "path": "token1Mint"
               }
             ],
             "program": {
@@ -1249,11 +1253,11 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "baseMint"
+                "path": "token0Mint"
               },
               {
                 "kind": "account",
-                "path": "tokenMint"
+                "path": "token1Mint"
               }
             ],
             "program": {
@@ -1325,7 +1329,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "baseMint"
+                "path": "token0Mint"
               }
             ],
             "program": {
@@ -1360,7 +1364,7 @@ export type BondingCurve = {
               },
               {
                 "kind": "account",
-                "path": "tokenMint"
+                "path": "token1Mint"
               }
             ],
             "program": {

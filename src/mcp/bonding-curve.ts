@@ -174,8 +174,8 @@ export const bondingCurveTools = [
         ),
       baseMint: z.string().describe("Base token mint address (e.g. WSOL)"),
       image: z.string().describe("Base64 encoded image data"),
-      tokenDecimals: z.number().default(9).describe("Token decimals"),
-      baseDecimals: z.number().default(9).describe("Base token decimals"),
+      tokenDecimals: z.number().default(6).describe("Token decimals"),
+      baseDecimals: z.number().describe("Base token decimals"),
       tokenTotalSupply: z.number().describe("Total token supply"),
       twitterHandle: z
         .string()
@@ -201,8 +201,8 @@ export const bondingCurveTools = [
         baseRaiseTarget,
         baseMint,
         image,
-        tokenDecimals = 9,
-        baseDecimals = 9,
+        tokenDecimals = 6,
+        baseDecimals,
         tokenTotalSupply,
         twitterHandle,
         discordLink,
@@ -437,13 +437,13 @@ export const bondingCurveTools = [
     - Total Supply: ${curve?.tokenTotalSupply
       .div(new BN(10 ** curve.tokenDecimals))
       .toString()}
-    - Sol Raise Target: ${curve?.baseRaiseTarget
+    - Base Raise Target: ${curve?.baseRaiseTarget
       .div(new BN(10 ** curve.baseDecimals))
-      .toString()} SOL
+      .toString()} base tokens
     - Token Decimals: ${curve?.tokenDecimals}
     - Raised Amount: ${curve?.baseRaiseTarget
       .div(new BN(10 ** curve.baseDecimals))
-      .toString()} SOL
+      .toString()} base tokens
     - Tokens left to buy: ${curve?.realTokenReserves
       .div(new BN(10 ** curve.tokenDecimals))
       .toString()}
@@ -469,10 +469,14 @@ export const bondingCurveTools = [
       mintAddress: z.string().describe("Address of token mint"),
       isBuy: z
         .boolean()
-        .describe("True to buy tokens with SOL, False to sell tokens for SOL"),
+        .describe(
+          "True to buy tokens with base token, False to sell tokens for base token"
+        ),
       amount: z
         .number()
-        .describe("Amount to swap (in SOL if buying, in tokens if selling)"),
+        .describe(
+          "Amount to swap (in base token if buying, in tokens if selling)"
+        ),
       slippagePercent: z
         .number()
         .optional()
@@ -522,13 +526,15 @@ export const bondingCurveTools = [
           // Format the results for display
           const sim = simulationResult.data!;
           const tokenDecimalsFactor = Math.pow(10, sim.tokenDecimals);
-          const expectedTokenAmount = sim.expectedTokenAmount
+          const expectedTokenAmount = sim.tokenAmount
             .div(new BN(tokenDecimalsFactor))
             .toNumber();
           const minTokenAmount = sim.minTokenAmount
             .div(new BN(tokenDecimalsFactor))
             .toNumber();
-          const feeInSol = sim.fee.div(new BN(LAMPORTS_PER_SOL)).toNumber();
+          const feeInSol = sim.feeAmount
+            .div(new BN(LAMPORTS_PER_SOL))
+            .toNumber();
           const netSolCost = amount - feeInSol;
 
           // Format completion status
@@ -583,13 +589,15 @@ To execute this swap, use the \`swap\` tool with:
 
           // Format the results for display
           const sim = simulationResult.data!;
-          const expectedSolAmount = sim.expectedBaseAmount
+          const expectedSolAmount = sim.baseAmount
             .div(new BN(10 ** sim.baseDecimals))
             .toNumber();
           const minSolAmount = sim.minBaseAmount
             .div(new BN(10 ** sim.baseDecimals))
             .toNumber();
-          const feeInSol = sim.fee.div(new BN(LAMPORTS_PER_SOL)).toNumber();
+          const feeInSol = sim.feeAmount
+            .div(new BN(LAMPORTS_PER_SOL))
+            .toNumber();
           const netSolReceived = expectedSolAmount; // Already net of fee
 
           return mcpText(`🔮 Sell Simulation for ${tokenName}
@@ -683,14 +691,14 @@ To execute this swap, use the \`swap\` tool with:
 
         if (simulationResult.success) {
           priceImpact = `${simulationResult.data!.priceImpact.toFixed(2)}%`;
-          fee = `${simulationResult.data!.fee.div(
+          fee = `${simulationResult.data!.feeAmount.div(
             new BN(10 ** curve.baseDecimals)
-          )} SOL`;
+          )} base tokens`;
         }
 
         return mcpText(`🔝 Maximum Buy for ${tokenName}
 
-💰 Maximum SOL input: ${maxBaseAmount?.toFixed(6)} 
+💰 Maximum base token input: ${maxBaseAmount?.toFixed(6)} 
 🪙 Expected tokens output: ${tokenAmount?.toFixed(6)} tokens
 📊 Estimated price impact: ${priceImpact}
 💸 Estimated fee: ${fee}
@@ -742,7 +750,7 @@ Note: This is an estimate and actual values may vary slightly due to market cond
         if (!curveResult.data.complete) {
           return mcpError(
             "Bonding curve is not complete yet",
-            "Bonding curve must be complete (SOL raise target met) before migrating to Raydium"
+            "Bonding curve must be complete (base raise target met) before migrating to Raydium"
           );
         }
 

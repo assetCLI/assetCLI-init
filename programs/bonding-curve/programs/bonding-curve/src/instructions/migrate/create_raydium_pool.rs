@@ -27,42 +27,45 @@ pub struct CreateRaydiumPool<'info> {
     #[account(mut)]
     /// CHECK: fee receiver asserted in validation function
     pub fee_receiver: UncheckedAccount<'info>,
-    #[account(mut)]
-    pub token_mint: Box<InterfaceAccount<'info, Mint>>,
+    // Same account as either of the token accounts token_0 or token_1
     #[account(
         mut,
-        // we'll do this check in function instead
-        // constraint = base_mint.key() < token_mint.key(),
+        constraint = project_token.key() == bonding_curve.token_mint @ ContractError::InvalidArgument,
     )]
-    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
+    pub project_token: Box<InterfaceAccount<'info, Mint>>,
     #[account(
         mut,
-        seeds=[BondingCurve::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()],
-        constraint = bonding_curve.token_mint == token_mint.key() @ ContractError::NotBondingCurveMint,
+        constraint = token_0_mint.key() < token_1_mint.key() @ ContractError::InvalidBaseMint,
+    )]
+    pub token_0_mint: Box<InterfaceAccount<'info, Mint>>,
+    #[account(mut)]
+    pub token_1_mint: Box<InterfaceAccount<'info, Mint>>,
+    #[account(
+        mut,
+        seeds=[BondingCurve::SEED_PREFIX.as_bytes(), project_token.key().as_ref()],
+        constraint = bonding_curve.token_mint == project_token.key() @ ContractError::NotBondingCurveMint,
         bump = bonding_curve.bump
     )]
     pub bonding_curve: Box<Account<'info, BondingCurve>>,
     #[account(
         mut,
-        seeds=[BondingCurve::VAULT_PREFIX.as_bytes(), token_mint.key().as_ref()],
+        seeds=[BondingCurve::VAULT_PREFIX.as_bytes(), project_token.key().as_ref()],
         bump=bonding_curve.vault_bump,
     )]
     pub bonding_curve_vault: SystemAccount<'info>,
     #[account(
         mut,
-        associated_token::mint = token_mint,
+        associated_token::mint = token_0_mint,
         associated_token::authority= bonding_curve_vault,
-        constraint = bonding_curve.token_mint == token_mint.key() @ ContractError::NotBondingCurveMint,
     )]
-    pub bonding_curve_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub token_0_account: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
         mut,
-        associated_token::mint = base_mint,
+        associated_token::mint = token_1_mint,
         associated_token::authority= bonding_curve_vault,
-        constraint = bonding_curve.token_mint == token_mint.key() @ ContractError::NotBondingCurveMint,
     )]
-    pub bonding_curve_base_account: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(seeds = [Proposal::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()], bump)]
+    pub token_1_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(seeds = [Proposal::SEED_PREFIX.as_bytes(), project_token.key().as_ref()], bump)]
     pub proposal: Box<Account<'info, Proposal>>,
     /// CHECK: Treasury address, assert in validation function
     #[account(mut,
@@ -74,17 +77,18 @@ pub struct CreateRaydiumPool<'info> {
     pub proposal_authority: UncheckedAccount<'info>,
     #[account(
         init_if_needed,
-        associated_token::mint = token_mint,
+        associated_token::mint = token_0_mint,
         associated_token::authority = proposal_authority,
         payer = creator
     )]
-    pub proposal_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub proposal_token_0_account: Box<InterfaceAccount<'info, TokenAccount>>,
     #[account(
-        mut,
-        associated_token::mint = base_mint,
-        associated_token::authority = proposal_authority,
+        init_if_needed,
+        payer = creator,
+        associated_token::mint = token_1_mint,
+        associated_token::authority = proposal_authority
     )]
-    pub proposal_base_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub proposal_token_1_account: Box<InterfaceAccount<'info, TokenAccount>>,
     pub cp_swap_program: Program<'info, RaydiumCpmm>,
     pub amm_config: Box<Account<'info, AmmConfig>>,
     /// CHECK: pool vault and lp mint authority
@@ -100,8 +104,8 @@ pub struct CreateRaydiumPool<'info> {
         seeds = [
             POOL_SEED.as_bytes(),
             amm_config.key().as_ref(),
-            base_mint.key().as_ref(),
-            token_mint.key().as_ref(),
+            token_0_mint.key().as_ref(),
+            token_1_mint.key().as_ref(),
         ],
         seeds::program = cp_swap_program.key(),
         bump,
@@ -127,7 +131,7 @@ pub struct CreateRaydiumPool<'info> {
         seeds = [
             POOL_VAULT_SEED.as_bytes(),
             pool_state.key().as_ref(),
-            base_mint.key().as_ref()
+            token_0_mint.key().as_ref()
         ],
         seeds::program = cp_swap_program.key(),
         bump,
@@ -139,7 +143,7 @@ pub struct CreateRaydiumPool<'info> {
         seeds = [
             POOL_VAULT_SEED.as_bytes(),
             pool_state.key().as_ref(),
-            token_mint.key().as_ref()
+            token_1_mint.key().as_ref()
         ],
         seeds::program = cp_swap_program.key(),
         bump,
@@ -171,7 +175,7 @@ pub struct CreateRaydiumPool<'info> {
 impl<'info> CreateRaydiumPool<'info> {
     pub fn revoke_mint_authority(&self) -> Result<()> {
         let accounts = SetAuthority {
-            account_or_mint: self.token_mint.to_account_info(),
+            account_or_mint: self.project_token.to_account_info(),
             current_authority: self.bonding_curve.to_account_info(),
         };
         let signer_seeds = self.bonding_curve.get_signer_seeds();
@@ -203,7 +207,12 @@ impl<'info> CreateRaydiumPool<'info> {
         Ok(())
     }
 
-    pub fn transfer_to_treasury(&mut self, base_amount: u64, token_amount: u64) -> Result<()> {
+    pub fn transfer_to_vault(
+        &mut self,
+        base_amount: u64,
+        token_amount: u64,
+        is_base_mint_0: bool
+    ) -> Result<()> {
         let treasury_address = self.proposal.treasury_address;
         require!(
             self.proposal_authority.key() == self.proposal.authority_address,
@@ -212,13 +221,21 @@ impl<'info> CreateRaydiumPool<'info> {
         require!(self.proposal_treasury.key() == treasury_address, ContractError::InvalidTreasury);
         let signer_seeds = self.bonding_curve.get_vault_seeds();
         let signer = &[&signer_seeds[..]];
-        // Transfer tokens to the treasury
+
+        // We do everything by assuming token_0 is the base mint, so swap the base and token mint if it's not
+        let (base_amount, token_amount) = if is_base_mint_0 {
+            (base_amount, token_amount)
+        } else {
+            (token_amount, base_amount)
+        };
+
+        // Transfer project tokens to the treasury
         let token_transfer_ctx = CpiContext::new_with_signer(
             self.token_1_program.to_account_info(),
             anchor_spl::token_interface::TransferChecked {
-                from: self.bonding_curve_token_account.to_account_info(),
-                to: self.proposal_token_account.to_account_info(),
-                mint: self.token_mint.to_account_info(),
+                from: self.token_1_account.to_account_info(),
+                to: self.proposal_token_1_account.to_account_info(),
+                mint: self.token_1_mint.to_account_info(),
                 authority: self.bonding_curve_vault.to_account_info(),
             },
             signer
@@ -226,32 +243,27 @@ impl<'info> CreateRaydiumPool<'info> {
         anchor_spl::token_interface::transfer_checked(
             token_transfer_ctx,
             token_amount,
-            self.token_mint.decimals
+            self.token_1_mint.decimals
         )?;
-
-        msg!("Transferred {} tokens to treasury", token_amount);
-        msg!("Transferred {} base to treasury", base_amount);
-        msg!(
-            "But amount available in the base account: {}",
-            self.bonding_curve_base_account.amount
-        );
 
         // Transfer the base amount (WSOL/USD*) to the proposal authority
         let base_transfer_ctx = CpiContext::new_with_signer(
             self.token_program.to_account_info(),
             anchor_spl::token_interface::TransferChecked {
-                from: self.bonding_curve_base_account.to_account_info(),
-                to: self.proposal_base_account.to_account_info(),
-                mint: self.base_mint.to_account_info(),
+                from: self.token_0_account.to_account_info(),
+                to: self.proposal_token_0_account.to_account_info(),
+                mint: self.token_0_mint.to_account_info(),
                 authority: self.bonding_curve_vault.to_account_info(),
             },
             signer
         );
         anchor_spl::token_interface::transfer_checked(
             base_transfer_ctx,
-            base_amount.min(self.bonding_curve_base_account.amount),
-            self.base_mint.decimals
+            base_amount.min(self.token_0_account.amount),
+            self.token_0_mint.decimals
         )?;
+
+        msg!("Transferred {} tokens to treasury", base_amount.min(self.token_0_account.amount));
         Ok(())
     }
 
@@ -278,70 +290,27 @@ impl<'info> CreateRaydiumPool<'info> {
         Ok(())
     }
 
-    pub fn create_cpmm_pool(&mut self, funding_amount_base: u64, token_amount: u64) -> Result<()> {
+    pub fn create_cpmm_pool(&mut self, init_amount_0: u64, init_amount_1: u64) -> Result<()> {
         // get 20% of the real base reserves as the funding amount for pool
         let migration_time = Clock::get()?.unix_timestamp as u64;
-        let init_amount_0 = funding_amount_base; // the base amount
-        let init_amount_1 = token_amount; // the token amount
-
-        // swap every related field based on key order
-        let (
-            token_0_mint,
-            token_1_mint,
-            token_0_amount,
-            token_1_amount,
-            token_0_account,
-            token_1_account,
-            token_0_vault,
-            token_1_vault,
-            token_0_program,
-            token_1_program,
-        ) = if self.base_mint.key() < self.token_mint.key() {
-            (
-                self.base_mint.to_account_info(),
-                self.token_mint.to_account_info(),
-                init_amount_0,
-                init_amount_1,
-                self.bonding_curve_base_account.to_account_info(),
-                self.bonding_curve_token_account.to_account_info(),
-                self.token_0_vault.to_account_info(),
-                self.token_1_vault.to_account_info(),
-                self.token_program.to_account_info(),
-                self.token_1_program.to_account_info(),
-            )
-        } else {
-            (
-                self.token_mint.to_account_info(),
-                self.base_mint.to_account_info(),
-                init_amount_1,
-                init_amount_0,
-                self.bonding_curve_token_account.to_account_info(),
-                self.bonding_curve_base_account.to_account_info(),
-                self.token_1_vault.to_account_info(),
-                self.token_0_vault.to_account_info(),
-                self.token_1_program.to_account_info(),
-                self.token_program.to_account_info(),
-            )
-        };
-
         let accounts = cpi::accounts::Initialize {
             creator: self.bonding_curve_vault.to_account_info(),
             amm_config: self.amm_config.to_account_info(),
             authority: self.authority.to_account_info(),
             pool_state: self.pool_state.to_account_info(),
-            token_0_mint,
-            token_1_mint,
+            token_0_mint: self.token_0_mint.to_account_info(),
+            token_1_mint: self.token_1_mint.to_account_info(),
             lp_mint: self.lp_mint.to_account_info(),
-            creator_token_0: token_0_account,
-            creator_token_1: token_1_account,
+            creator_token_0: self.token_0_account.to_account_info(),
+            creator_token_1: self.token_1_account.to_account_info(),
             creator_lp_token: self.bonding_curve_lp_token.to_account_info(),
-            token_0_vault,
-            token_1_vault,
+            token_0_vault: self.token_0_vault.to_account_info(),
+            token_1_vault: self.token_1_vault.to_account_info(),
             create_pool_fee: self.create_pool_fee.to_account_info(),
             observation_state: self.observation_state.to_account_info(),
             token_program: self.token_program.to_account_info(),
-            token_0_program,
-            token_1_program,
+            token_0_program: self.token_program.to_account_info(),
+            token_1_program: self.token_1_program.to_account_info(),
             associated_token_program: self.associated_token_program.to_account_info(),
             system_program: self.system_program.to_account_info(),
             rent: self.rent.to_account_info(),
@@ -352,7 +321,7 @@ impl<'info> CreateRaydiumPool<'info> {
             accounts,
             signer
         );
-        cpi::initialize(cpi_ctx, token_0_amount, token_1_amount, migration_time)
+        cpi::initialize(cpi_ctx, init_amount_0, init_amount_1, migration_time)
     }
 
     pub fn process(&mut self) -> Result<()> {
@@ -360,12 +329,19 @@ impl<'info> CreateRaydiumPool<'info> {
         self.revoke_mint_authority()?;
         msg!("Revoked mint authority");
 
+        // Check which mint is the base mint and which is the token mint
+        let is_base_mint_0 = self.token_0_mint.key() == self.bonding_curve.base_mint;
+
         // Calculate funding amounts
         let total_base_raised = self.bonding_curve.real_base_reserves;
         msg!("Total base raised: {}", total_base_raised);
-        msg!("Actual amount available in the vault: {}", self.bonding_curve_base_account.amount);
-        let cpmm_funding_amount = total_base_raised.saturating_mul(20).checked_div(100).unwrap();
-        let vault_amount = total_base_raised.checked_sub(cpmm_funding_amount).unwrap();
+        msg!("Actual amount available in the vault: {}", if is_base_mint_0 {
+            self.token_0_account.amount
+        } else {
+            self.token_1_account.amount
+        });
+        let cpmm_base_amount = total_base_raised.saturating_mul(20).checked_div(100).unwrap();
+        let vault_base_amount = total_base_raised.checked_sub(cpmm_base_amount).unwrap();
 
         // Calculate token amounts
         let remaining_tokens = self.bonding_curve.token_total_supply.checked_div(2u64).unwrap();
@@ -373,18 +349,29 @@ impl<'info> CreateRaydiumPool<'info> {
             .checked_mul(30)
             .and_then(|n| n.checked_div(100))
             .unwrap();
-        let treasury_amount = remaining_tokens.checked_sub(cpmm_token_amount).unwrap();
+        let vault_token_amount = remaining_tokens.checked_sub(cpmm_token_amount).unwrap();
 
-        msg!("Funding amounts: {} base, {} token", cpmm_funding_amount, cpmm_token_amount);
+        msg!("Funding amounts: {} base, {} token", cpmm_base_amount, cpmm_token_amount);
         // Fund the vault for pool creation
         self.fund_vault_for_pool_creation()?;
         msg!("Funded 0.5 SOL to the vault for pool creation");
         // Create the CPMM pool
-        self.create_cpmm_pool(cpmm_funding_amount, cpmm_token_amount)?;
+        self.create_cpmm_pool(
+            if is_base_mint_0 {
+                cpmm_base_amount
+            } else {
+                cpmm_token_amount
+            },
+            if is_base_mint_0 {
+                cpmm_token_amount
+            } else {
+                cpmm_base_amount
+            }
+        )?;
         msg!("Created CPMM pool");
         // Transfer remaining funds to the treasury
-        self.transfer_to_treasury(vault_amount, treasury_amount)?;
-        msg!("Transferred {} base and {} token to treasury", vault_amount, treasury_amount);
+        self.transfer_to_vault(vault_base_amount, vault_token_amount, is_base_mint_0)?;
+        msg!("Transferred {} base and {} token to treasury", vault_base_amount, vault_token_amount);
         // Transfer migration fee
         self.transfer_fee_for_migration()?;
         msg!("Transferred migration fee to {}", self.global.fee_receiver);

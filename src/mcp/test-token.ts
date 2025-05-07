@@ -14,7 +14,7 @@ export function registerTestTokenTools(server: McpServer) {
   // Get Test Token
   server.tool(
     "getTestToken",
-    "Get test token",
+    "Get test token. This will create a new mint and mint some tokens to the wallet. CAUTION: Never use this in mainnet or mainnet rpc URL",
     {
       decimals: z.number().optional(),
       amountToMint: z.number().optional(),

@@ -106,6 +106,7 @@ impl<'info> Swap<'info> {
     }
     pub fn process(&mut self, params: SwapParams) -> Result<()> {
         let clock = Clock::get()?;
+        let slot = clock.unix_timestamp;
         require!(self.bonding_curve.is_started(&clock), ContractError::CurveNotStarted);
         require!(!self.bonding_curve.complete, ContractError::BondingCurveComplete);
         let SwapParams { base_in, amount, min_out_amount } = params;
@@ -120,15 +121,16 @@ impl<'info> Swap<'info> {
                 self.user_token_account.amount >= amount,
                 ContractError::InsufficientUserTokens
             );
-            let sell_result = match self.bonding_curve.apply_sell(amount) {
+            let sell_result = match self.bonding_curve.apply_sell(amount, slot) {
                 Some(result) => result,
                 None => {
                     return Err(ContractError::SellFailed.into());
                 }
             };
+            // Use fee_amount from SellResult
+            fee_amount = sell_result.fee_amount;
             base_amount = sell_result.base_amount;
             token_amount = sell_result.token_amount;
-            fee_amount = bonding_curve.calculate_fee(base_amount, clock.unix_timestamp)?;
             self.complete_sell(sell_result.clone(), min_out_amount, fee_amount)?;
             emit!(TokensSold {
                 bonding_curve: self.bonding_curve.key(),
@@ -140,10 +142,22 @@ impl<'info> Swap<'info> {
             });
         } else {
             // Buy token with base token
-            let buy_result = self.bonding_curve.apply_buy(amount).ok_or(ContractError::BuyFailed)?;
-            base_amount = buy_result.base_amount;
+            // User sends net base, so we must reverse-calculate gross for fee
+            // Let net = gross - fee(gross), solve for gross
+            // gross = net * 10000 / (10000 - fee_bps)
+            let fee_bps = bonding_curve.get_fee_bps(slot);
+            let gross_base = amount
+                .checked_mul(10_000)
+                .ok_or(ProgramError::ArithmeticOverflow)?
+                .checked_div(10_000 - fee_bps)
+                .ok_or(ProgramError::ArithmeticOverflow)?;
+            // Use gross_base for buy, get fee from BuyResult
+            let buy_result = self.bonding_curve
+                .apply_buy(gross_base, slot)
+                .ok_or(ContractError::BuyFailed)?;
+            fee_amount = buy_result.fee_amount;
+            base_amount = amount;
             token_amount = buy_result.token_amount;
-            fee_amount = bonding_curve.calculate_fee(base_amount, clock.unix_timestamp)?;
             self.complete_buy(buy_result.clone(), min_out_amount, fee_amount)?;
             emit!(TokensPurchased {
                 bonding_curve: self.bonding_curve.key(),
@@ -158,13 +172,13 @@ impl<'info> Swap<'info> {
     }
 
     fn complete_buy(
-        &self,
+        &mut self,
         buy_result: BuyResult,
         min_out_amount: u64,
         fee_amount: u64
     ) -> Result<()> {
         require!(buy_result.token_amount >= min_out_amount, ContractError::SlippageExceeded);
-        // Transfer base token from user to vault (minus fee)
+        // Transfer net base token from user to vault
         let user_to_vault = TransferChecked {
             from: self.user_base_account.to_account_info(),
             authority: self.user.to_account_info(),
@@ -173,12 +187,28 @@ impl<'info> Swap<'info> {
         };
         transfer_checked(
             CpiContext::new(self.token_program.to_account_info(), user_to_vault),
-            buy_result.base_amount,
+            buy_result.base_amount, // this is the base_amount minus fee
             self.base_mint.decimals
         )?;
         // Transfer fee to fee receiver
-        // todo: check if fee receiver is correct
+        let vault_to_fee = TransferChecked {
+            from: self.bonding_curve_base_account.to_account_info(),
+            authority: self.bonding_curve_vault.to_account_info(),
+            to: self.fee_receiver_base_account.to_account_info(),
+            mint: self.base_mint.to_account_info(),
+        };
 
+        let signer = self.bonding_curve.get_vault_seeds();
+        let signer_seeds = &[&signer[..]];
+        transfer_checked(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                vault_to_fee,
+                signer_seeds
+            ),
+            fee_amount,
+            self.base_mint.decimals
+        )?;
         // Transfer project tokens to user
         let cpi_accounts = TransferChecked {
             from: self.bonding_curve_token_account.to_account_info(),
@@ -186,8 +216,6 @@ impl<'info> Swap<'info> {
             to: self.user_token_account.to_account_info(),
             mint: self.token_mint.to_account_info(),
         };
-        let signer = self.bonding_curve.get_vault_seeds();
-        let signer_seeds = &[&signer[..]];
         transfer_checked(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
@@ -197,17 +225,19 @@ impl<'info> Swap<'info> {
             buy_result.token_amount,
             self.token_mint.decimals
         )?;
+        self.bonding_curve.real_base_reserves =
+            self.bonding_curve.real_base_reserves.saturating_sub(fee_amount);
         Ok(())
     }
 
     fn complete_sell(
-        &self,
+        &mut self,
         sell_result: SellResult,
         min_out_amount: u64,
         fee_amount: u64
     ) -> Result<()> {
         require!(sell_result.base_amount >= min_out_amount, ContractError::SlippageExceeded);
-        // Burn project tokens from user
+        // Send project tokens from user
         let cpi_accounts = TransferChecked {
             from: self.user_token_account.to_account_info(),
             authority: self.user.to_account_info(),
@@ -234,7 +264,7 @@ impl<'info> Swap<'info> {
                 vault_to_user,
                 signer_seeds
             ),
-            sell_result.base_amount - fee_amount,
+            sell_result.base_amount, // this is the base_amount minus fee
             self.base_mint.decimals
         )?;
         // Transfer fee to fee receiver
@@ -253,6 +283,8 @@ impl<'info> Swap<'info> {
             fee_amount,
             self.base_mint.decimals
         )?;
+        self.bonding_curve.real_base_reserves =
+            self.bonding_curve.real_base_reserves.saturating_sub(fee_amount);
         Ok(())
     }
 }

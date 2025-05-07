@@ -2,7 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ConfigService } from "../services/config-service";
 import { WalletService } from "../services/wallet-service";
-import { useMcpContext } from "../utils/mcp-hooks";
+import { mcpText, useMcpContext } from "../utils/mcp-hooks";
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 
 export function registerConfigAndWalletTools(server: McpServer) {
   server.tool(
@@ -86,33 +88,44 @@ export function registerConfigAndWalletTools(server: McpServer) {
     try {
       // Only need connection
       const context = await useMcpContext({
-        requireWallet: false,
+        requireWallet: true,
         requireConfig: false,
       });
 
-      if (!context.success) {
+      if (!context.success || !context.connection || !context.keypair) {
         return {
           content: [
             { type: "text", text: context.error || "Failed to get context" },
           ],
         };
       }
-
-      // Get wallet info using the connection
-      const walletInfoRes = await WalletService.getWalletInfo(
-        context.connection
+      const connection = context.connection;
+      const wallet = context.keypair;
+      const solBalance = await connection.getBalance(wallet.publicKey);
+      const [classicTokens, t22Tokens] = await Promise.all([
+        context.connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+          programId: TOKEN_PROGRAM_ID,
+        }),
+        context.connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+          programId: TOKEN_2022_PROGRAM_ID,
+        }),
+      ]);
+      const allTokens = [...classicTokens.value, ...t22Tokens.value];
+      return mcpText(
+        `{
+        "wallet":${wallet.publicKey.toBase58()},
+        "solBalance":${solBalance / LAMPORTS_PER_SOL} SOL,
+        "tokens":${JSON.stringify(
+          allTokens.map((token) => ({
+            pubkey: token.pubkey.toBase58(),
+            mint: token.account.data.parsed.info.mint,
+            programId: token.account.owner.toBase58(),
+            amount: token.account.data.parsed.info.tokenAmount,
+          }))
+        )},
+        }`,
+        "Fetched wallet info"
       );
-      if (!walletInfoRes.success) {
-        return {
-          content: [{ type: "text", text: "Failed to get wallet info" }],
-        };
-      }
-
-      return {
-        content: [
-          { type: "text", text: JSON.stringify(walletInfoRes.data, null, 2) },
-        ],
-      };
     } catch (error) {
       return {
         content: [{ type: "text", text: `Failed to show wallet: ${error}` }],

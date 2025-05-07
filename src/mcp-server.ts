@@ -17,43 +17,8 @@ const server = new McpServer({
   version: "0.0.1",
 });
 registerConfigAndWalletTools(server);
-registerMultisigTools(server);
-registerDaoTools(server);
 registerTestTokenTools(server);
-registerProposalTools(server);
 registerBondingCurveTools(server);
-registerResource(server);
-// Get Balance
-server.tool(
-  "getBalance",
-  "Used to look up balance by public key (32 byte base58 encoded address)",
-  { publicKey: z.string() },
-  async ({ publicKey }) => {
-    try {
-      const connectionRes = await ConnectionService.getConnection();
-      if (!connectionRes.success || !connectionRes.data)
-        return {
-          content: [{ type: "text", text: "Connection not established" }],
-        };
-
-      const connection = connectionRes.data;
-      const pubkey = new PublicKey(publicKey);
-      const balance = await connection.getBalance(pubkey);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${balance / LAMPORTS_PER_SOL} SOL (${balance} lamports)`,
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
-      };
-    }
-  }
-);
 
 // Get Transaction
 server.tool(

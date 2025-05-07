@@ -6,10 +6,13 @@ import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
 import { mockStorage } from "@metaplex-foundation/umi-storage-mock";
 import {
   createAssociatedTokenAccount,
+  createMint,
   createSyncNativeInstruction,
   getAssociatedTokenAddressSync,
   getOrCreateAssociatedTokenAccount,
+  mintTo,
   TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import {
   createGenericFile,
@@ -21,13 +24,14 @@ import { readFile } from "fs/promises";
 import { findMetadataPda } from "@metaplex-foundation/mpl-token-metadata";
 import path from "path";
 import assert from "assert";
-import { Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { Connection, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { BN } from "bn.js";
+import { connect } from "http2";
 
 describe("bonding-curve", async () => {
-  const WSOL_ID = new anchor.web3.PublicKey(
-    "So11111111111111111111111111111111111111112"
-  );
+  // const baseMint = new anchor.web3.PublicKey(
+  //   "So11111111111111111111111111111111111111112"
+  // );
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
   const provider = anchor.AnchorProvider.env();
@@ -56,11 +60,7 @@ describe("bonding-curve", async () => {
     decimals: 6,
   };
 
-  const userBaseAccount = anchor.utils.token.associatedAddress({
-    mint: WSOL_ID,
-    owner: wallet.publicKey,
-  });
-  const solRaiseTarget = new anchor.BN(1000 * anchor.web3.LAMPORTS_PER_SOL);
+  const baseRaiseTarget = new anchor.BN(1000 * anchor.web3.LAMPORTS_PER_SOL);
   const [mintKey, _] = anchor.web3.PublicKey.findProgramAddressSync(
     [
       Buffer.from("bonding_curve_token"),
@@ -69,6 +69,12 @@ describe("bonding-curve", async () => {
     ],
     program.programId
   );
+  const baseMintKeypair = Keypair.generate();
+  const baseMint = baseMintKeypair.publicKey;
+  const userBaseAccount = anchor.utils.token.associatedAddress({
+    mint: baseMint,
+    owner: wallet.publicKey,
+  });
   // Find metadata PDA
   const metadataAddress = new anchor.web3.PublicKey(
     findMetadataPda(umi, {
@@ -94,7 +100,7 @@ describe("bonding-curve", async () => {
 
   // Find bonding curve base token account
   const bondingCurveVaultBaseAccount = anchor.utils.token.associatedAddress({
-    mint: WSOL_ID,
+    mint: baseMint,
     owner: bondingCurveVaultPda,
   });
 
@@ -131,12 +137,14 @@ describe("bonding-curve", async () => {
   const authorityAddressForProposal = wallet.publicKey;
 
   // Calculate PDA addresses for Raydium integration
+  const [token0Mint, token1Mint] = getOrderedMints(baseMint, mintKey);
+
   const poolState = anchor.web3.PublicKey.findProgramAddressSync(
     [
       Buffer.from("pool"),
       AMM_CONFIG_ID.toBuffer(),
-      WSOL_ID.toBuffer(),
-      mintKey.toBuffer(),
+      token0Mint.toBuffer(),
+      token1Mint.toBuffer(),
     ],
     CPMM_PROGRAM_ID
   )[0];
@@ -159,17 +167,17 @@ describe("bonding-curve", async () => {
   )[0];
 
   const token_vault_0 = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("pool_vault"), poolState.toBuffer(), WSOL_ID.toBuffer()],
+    [Buffer.from("pool_vault"), poolState.toBuffer(), token0Mint.toBuffer()],
     CPMM_PROGRAM_ID
   )[0];
 
   const token_vault_1 = anchor.web3.PublicKey.findProgramAddressSync(
-    [Buffer.from("pool_vault"), poolState.toBuffer(), mintKey.toBuffer()],
+    [Buffer.from("pool_vault"), poolState.toBuffer(), token1Mint.toBuffer()],
     CPMM_PROGRAM_ID
   )[0];
 
   const feeReceiverBaseAccount = anchor.utils.token.associatedAddress({
-    mint: WSOL_ID,
+    mint: baseMint,
     owner: wallet.publicKey,
   });
 
@@ -227,23 +235,46 @@ describe("bonding-curve", async () => {
       console.log("Token URI:", tokenUri);
       metadataOfToken.uri = tokenUri;
 
-      // Lets wrap 1010 SOL in WSOL
+      const mintTx = await createMint(
+        provider.connection,
+        wallet.payer,
+        wallet.publicKey,
+        null,
+        9, //base decimals
+        baseMintKeypair
+      );
+      assert.ok(mintTx.equals(baseMint));
+
       await createAssociatedTokenAccount(
         provider.connection,
         wallet.payer,
-        WSOL_ID,
+        baseMint,
         wallet.publicKey
       );
-      const tx = new anchor.web3.Transaction().add(
-        anchor.web3.SystemProgram.transfer({
-          fromPubkey: wallet.publicKey,
-          toPubkey: userBaseAccount,
-          lamports: 1010 * LAMPORTS_PER_SOL,
-        }),
-        createSyncNativeInstruction(userBaseAccount)
+      // Lets wrap 1010 SOL in WSOL
+      // const tx = new anchor.web3.Transaction().add(
+      //   anchor.web3.SystemProgram.transfer({
+      //     fromPubkey: wallet.publicKey,
+      //     toPubkey: userBaseAccount,
+      //     lamports: 1010 * LAMPORTS_PER_SOL,
+      //   }),
+      //   createSyncNativeInstruction(userBaseAccount)
+      // );
+      // await provider.sendAndConfirm(tx, []);
+      // console.log("Wrapped 1010 SOL in WSOL");
+
+      // Mint 1010 tokens to the base account
+      await mintTo(
+        provider.connection,
+        wallet.payer,
+        baseMint,
+        userBaseAccount,
+        wallet.publicKey,
+        1010 * LAMPORTS_PER_SOL,
+        []
       );
-      await provider.sendAndConfirm(tx, []);
-      console.log("Wrapped 1010 SOL in WSOL");
+      console.log("Minted 1010 tokens to base account");
+      // Create the associated token account for the base mint
     } catch (err) {
       console.error("Error loading token image:", err);
       // Fallback to a test URI if file loading fails
@@ -296,7 +327,7 @@ describe("bonding-curve", async () => {
       name: metadataOfToken.name,
       symbol: metadataOfToken.symbol,
       uri: metadataOfToken.uri,
-      baseRaiseTarget: solRaiseTarget,
+      baseRaiseTarget: baseRaiseTarget,
       tokenDecimals: 6,
       baseDecimals: 9,
       tokenTotalSupply: new anchor.BN(100_000_000).mul(
@@ -320,7 +351,7 @@ describe("bonding-curve", async () => {
         .createBondingCurve(params)
         .accountsPartial({
           tokenMint: mintKey,
-          baseMint: WSOL_ID,
+          baseMint: baseMint,
           bondingCurveVault: bondingCurveVaultPda,
           creator: wallet.publicKey,
           bondingCurve: bondingCurvePda,
@@ -394,7 +425,7 @@ describe("bonding-curve", async () => {
         global: globalStateAddress,
         feeReceiver: wallet.publicKey,
         tokenMint: mintKey,
-        baseMint: WSOL_ID,
+        baseMint: baseMint,
         bondingCurveBaseAccount: bondingCurveVaultBaseAccount,
         feeReceiverBaseAccount: feeReceiverBaseAccount,
         bondingCurve: bondingCurvePda,
@@ -462,7 +493,7 @@ describe("bonding-curve", async () => {
         global: globalStateAddress,
         feeReceiver: wallet.publicKey,
         tokenMint: mintKey,
-        baseMint: WSOL_ID,
+        baseMint: baseMint,
         bondingCurveBaseAccount: bondingCurveVaultBaseAccount,
         bondingCurveVault: bondingCurveVaultPda,
         feeReceiverBaseAccount: feeReceiverBaseAccount,
@@ -485,6 +516,18 @@ describe("bonding-curve", async () => {
       console.log(
         "Sell transaction signature: ",
         getTransactionOnExplorer(signature)
+      );
+      const bondingCurve =
+        await program.account.bondingCurve.fetch(bondingCurvePda);
+      const bondingCurveBaseTokenAccountInfo =
+        await provider.connection.getTokenAccountBalance(
+          bondingCurveVaultBaseAccount
+        );
+      assert.ok(
+        bondingCurve.realBaseReserves.lte(
+          new BN(bondingCurveBaseTokenAccountInfo.value.amount)
+        ),
+        "Bonding curve reserves should be less than or equal to the account balance due to fee deductions"
       );
     } catch (err) {
       console.error("Error during sell:", err);
@@ -554,6 +597,7 @@ describe("bonding-curve", async () => {
         // Execute the buy
         const tx = new anchor.web3.Transaction().add(modifyComputeUnits);
         console.log(`bro i am swapping`);
+
         // Add the swap instruction
         const swapInstruction = await program.methods
           .swap({
@@ -575,7 +619,7 @@ describe("bonding-curve", async () => {
             clock: anchor.web3.SYSVAR_CLOCK_PUBKEY,
             bondingCurveVault: bondingCurveVaultPda,
             proposal: proposalPda,
-            baseMint: WSOL_ID,
+            baseMint: baseMint,
             bondingCurveBaseAccount: bondingCurveVaultBaseAccount,
             feeReceiverBaseAccount: feeReceiverBaseAccount,
             userBaseAccount: userBaseAccount,
@@ -586,6 +630,18 @@ describe("bonding-curve", async () => {
 
         // Send the transaction
         await provider.sendAndConfirm(tx);
+        const bondingCurve =
+          await program.account.bondingCurve.fetch(bondingCurvePda);
+        const bondingCurveBaseTokenAccountInfo =
+          await provider.connection.getTokenAccountBalance(
+            bondingCurveVaultBaseAccount
+          );
+        assert.ok(
+          bondingCurve.realBaseReserves.lte(
+            new BN(bondingCurveBaseTokenAccountInfo.value.amount)
+          ),
+          "Bonding curve reserves should be less than or equal to the account balance due to fee deductions"
+        );
 
         // Verify the bonding curve is now completed
         const updatedBondingCurve =
@@ -606,7 +662,15 @@ describe("bonding-curve", async () => {
         units: 1000000,
       });
 
-    const proposalBaseAccount = (await getOrCreateAssociatedTokenAccount(provider.connection, wallet.payer, WSOL_ID, proposal.authorityAddress, true)).address;
+    const proposalBaseAccount = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        wallet.payer,
+        baseMint,
+        proposal.authorityAddress,
+        true
+      )
+    ).address;
 
     try {
       const proposal = await program.account.proposal.fetch(proposalPda);
@@ -618,7 +682,25 @@ describe("bonding-curve", async () => {
       );
       // Create the transaction
       const tx = new anchor.web3.Transaction().add(modifyComputeUnits);
-
+      const {
+        token0Mint,
+        token1Mint,
+        token0Account,
+        token1Account,
+        proposalToken0Account,
+        proposalToken1Account,
+        token0Program,
+        token1Program,
+      } = getOrderedMintAccounts(
+        baseMint,
+        mintKey,
+        bondingCurveVaultBaseAccount,
+        bondingCurveTokenAccount,
+        proposalBaseAccount,
+        proposalTokenAccount,
+        TOKEN_PROGRAM_ID,
+        TOKEN_PROGRAM_ID
+      );
       // Add the create_raydium_pool instruction
       const createRaydiumPoolIx = await program.methods
         .createRaydiumPool()
@@ -626,16 +708,17 @@ describe("bonding-curve", async () => {
           creator: wallet.publicKey,
           global: globalStateAddress,
           feeReceiver: wallet.publicKey,
-          tokenMint: mintKey,
-          baseMint: WSOL_ID,
+          token1Mint: token1Mint,
+          token0Mint: token0Mint,
           bondingCurve: bondingCurvePda,
-          bondingCurveTokenAccount: bondingCurveTokenAccount,
-          bondingCurveBaseAccount: bondingCurveVaultBaseAccount,
+          projectToken: mintKey,
+          token1Account: token1Account,
+          token0Account: token0Account,
           proposal: proposalPda,
           proposalTreasury: proposal.treasuryAddress,
           proposalAuthority: proposal.authorityAddress,
-          proposalBaseAccount: proposalBaseAccount,
-          proposalTokenAccount: proposalTokenAccount,
+          proposalToken0Account,
+          proposalToken1Account,
           cpSwapProgram: CPMM_PROGRAM_ID,
           ammConfig: AMM_CONFIG_ID,
           authority: authority,
@@ -648,8 +731,8 @@ describe("bonding-curve", async () => {
             "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8"
           ),
           observationState: observationState,
-          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-          token1Program: anchor.utils.token.TOKEN_PROGRAM_ID,
+          tokenProgram: token0Program,
+          token1Program: token1Program,
           associatedTokenProgram: anchor.utils.token.ASSOCIATED_PROGRAM_ID,
           systemProgram: anchor.web3.SystemProgram.programId,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
@@ -737,7 +820,7 @@ describe("bonding-curve", async () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        baseMint: WSOL_ID,
+        baseMint: baseMint,
         tokenMint: mintKey,
         cpSwapProgram: CPMM_PROGRAM_ID,
         user: wallet.publicKey,
@@ -763,7 +846,7 @@ describe("bonding-curve", async () => {
     const userBaseTokenAccount = await getOrCreateAssociatedTokenAccount(
       provider.connection,
       wallet.payer,
-      WSOL_ID,
+      baseMint,
       wallet.publicKey,
       true
     );
@@ -784,7 +867,7 @@ describe("bonding-curve", async () => {
         tokenVault: userTokenAccount.address,
         token0Vault: token_vault_0,
         token1Vault: token_vault_1,
-        baseMint: WSOL_ID,
+        baseMint: baseMint,
         tokenMint: mintKey,
         lockedLpVault: lockedLpVault,
         systemProgram: anchor.web3.SystemProgram.programId,
@@ -813,19 +896,20 @@ describe("bonding-curve", async () => {
       await getOrCreateAssociatedTokenAccount(
         provider.connection,
         wallet.payer,
-        WSOL_ID,
+        baseMint,
         wallet.publicKey,
         true
       )
     ).address;
-    const tx = new anchor.web3.Transaction().add(
-      anchor.web3.SystemProgram.transfer({
-        fromPubkey: wallet.publicKey,
-        toPubkey: userBaseTokenAccount,
-        lamports: 100 * LAMPORTS_PER_SOL,
-      }),
-      createSyncNativeInstruction(userBaseTokenAccount)
-    );
+    // const tx = new anchor.web3.Transaction().add(
+    //   anchor.web3.SystemProgram.transfer({
+    //     fromPubkey: wallet.publicKey,
+    //     toPubkey: userBaseTokenAccount,
+    //     lamports: 100 * LAMPORTS_PER_SOL,
+    //   }),
+    //   createSyncNativeInstruction(userBaseTokenAccount)
+    // );
+    const tx = new anchor.web3.Transaction();
     const swapIx = await program.methods
       .raydiumSwap(new anchor.BN(1 * LAMPORTS_PER_SOL), new BN(500))
       .accountsPartial({
@@ -840,7 +924,7 @@ describe("bonding-curve", async () => {
         outputVault: token_vault_1,
         inputTokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         outputTokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        inputTokenMint: WSOL_ID,
+        inputTokenMint: baseMint,
         outputTokenMint: mintKey,
         observationState,
       })
@@ -862,7 +946,9 @@ describe("bonding-curve", async () => {
       decimals: 6,
     };
 
-    const smallSolRaiseTarget = new anchor.BN(2 * anchor.web3.LAMPORTS_PER_SOL);
+    const smallbaseRaiseTarget = new anchor.BN(
+      2 * anchor.web3.LAMPORTS_PER_SOL
+    );
 
     // Find mint key for small target bonding curve
     const [smallMint, __] = anchor.web3.PublicKey.findProgramAddressSync(
@@ -905,7 +991,7 @@ describe("bonding-curve", async () => {
     });
 
     const smallBondingCurveBaseAccount = anchor.utils.token.associatedAddress({
-      mint: WSOL_ID,
+      mint: baseMint,
       owner: smallBondingCurveVaultPda,
     });
 
@@ -919,7 +1005,7 @@ describe("bonding-curve", async () => {
       name: smallTargetMetadata.name,
       symbol: smallTargetMetadata.symbol,
       uri: smallTargetMetadata.uri,
-      baseRaiseTarget: smallSolRaiseTarget,
+      baseRaiseTarget: smallbaseRaiseTarget,
       tokenDecimals: 6,
       baseDecimals: 9,
       tokenTotalSupply: new anchor.BN(1000000).mul(
@@ -943,7 +1029,7 @@ describe("bonding-curve", async () => {
         .createBondingCurve(smallCurveParams)
         .accountsPartial({
           tokenMint: smallMint,
-          baseMint: WSOL_ID,
+          baseMint: baseMint,
           creator: wallet.publicKey,
           bondingCurve: smallBondingCurvePda,
           proposal: smallProposalPda,
@@ -996,7 +1082,7 @@ describe("bonding-curve", async () => {
           global: globalStateAddress,
           feeReceiver: wallet.publicKey,
           tokenMint: smallMint,
-          baseMint: WSOL_ID,
+          baseMint: baseMint,
           bondingCurveBaseAccount: smallBondingCurveBaseAccount,
           feeReceiverBaseAccount: feeReceiverBaseAccount,
           userBaseAccount: userBaseAccount,
@@ -1045,4 +1131,50 @@ describe("bonding-curve", async () => {
 
 function getTransactionOnExplorer(tx: string): string {
   return `https://explorer.solana.com/tx/${tx}?cluster=custom`;
+}
+
+// Helper to deterministically order two mints for Raydium pool (token_0, token_1)
+function getOrderedMints(
+  mintA: anchor.web3.PublicKey,
+  mintB: anchor.web3.PublicKey
+) {
+  return mintA.toBuffer().compare(mintB.toBuffer()) < 0
+    ? [mintA, mintB]
+    : [mintB, mintA];
+}
+
+// Helper to deterministically order two mints and their associated accounts
+function getOrderedMintAccounts(
+  baseMint: anchor.web3.PublicKey,
+  tokenMint: anchor.web3.PublicKey,
+  bondingCurveBaseAccount: anchor.web3.PublicKey,
+  bondingCurveTokenAccount: anchor.web3.PublicKey,
+  proposalBaseAccount: anchor.web3.PublicKey,
+  proposalTokenAccount: anchor.web3.PublicKey,
+  token0Program: anchor.web3.PublicKey = anchor.utils.token.TOKEN_PROGRAM_ID,
+  token1Program: anchor.web3.PublicKey = anchor.utils.token.TOKEN_PROGRAM_ID
+) {
+  if (baseMint.toBuffer().compare(tokenMint.toBuffer()) < 0) {
+    return {
+      token0Mint: baseMint,
+      token1Mint: tokenMint,
+      token0Account: bondingCurveBaseAccount,
+      token1Account: bondingCurveTokenAccount,
+      proposalToken0Account: proposalBaseAccount,
+      proposalToken1Account: proposalTokenAccount,
+      token0Program: token0Program,
+      token1Program: token1Program,
+    };
+  } else {
+    return {
+      token0Mint: tokenMint,
+      token1Mint: baseMint,
+      token0Account: bondingCurveTokenAccount,
+      token1Account: bondingCurveBaseAccount,
+      proposalToken0Account: proposalTokenAccount,
+      proposalToken1Account: proposalBaseAccount,
+      token0Program: token1Program,
+      token1Program: token0Program,
+    };
+  }
 }

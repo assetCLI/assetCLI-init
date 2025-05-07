@@ -27,7 +27,6 @@ import {
   CPMM_PROGRAM_ID,
   METADATA_PROGRAM_ID,
   RAYDIUM_CREATE_POOL_FEE,
-  WSOL_ID,
 } from "../utils/constants";
 import {
   GlobalInitParams,
@@ -121,12 +120,15 @@ export class BondingCurveService {
   }
 
   private findPoolStatePda(mint: PublicKey, baseMint: PublicKey): PublicKey {
+    // Get ordered mints
+    const [token0Mint, token1Mint] = this.getOrderedMints(baseMint, mint);
+
     return PublicKey.findProgramAddressSync(
       [
         Buffer.from("pool"),
         new PublicKey(AMM_CONFIG_ID).toBuffer(),
-        baseMint.toBuffer(),
-        mint.toBuffer(),
+        token0Mint.toBuffer(),
+        token1Mint.toBuffer(),
       ],
       new PublicKey(CPMM_PROGRAM_ID)
     )[0];
@@ -511,10 +513,10 @@ export class BondingCurveService {
     slippageTolerance: number = 0.5
   ): Promise<
     ServiceResponse<{
-      expectedTokenAmount: BN;
+      tokenAmount: BN;
       minTokenAmount: BN;
       priceImpact: number;
-      fee: BN;
+      feeAmount: BN;
       willComplete: boolean;
       tokenDecimals: number;
       baseDecimals: number;
@@ -537,101 +539,74 @@ export class BondingCurveService {
 
       const curve = curveResult.data;
       const currentTime = Math.floor(Date.now() / 1000);
-      // Calculate fee on input base token
-      const fee = this._calculateFee(
+      const feeAmount = this._calculateFee(
         curve.startTime.toNumber(),
         baseAmount,
         currentTime
       );
-      const netBase = baseAmount.sub(fee);
-
-      // Check if this purchase would complete the bonding curve
-      const willComplete = this._willCompleteBondingCurve(curve, netBase);
-
-      // If purchase would exceed token reserves, adjust accordingly
-      let adjustedBaseAmount = netBase;
-      let tokensReceived: BN;
-
-      if (willComplete && this._wouldExceedTokenReserves(curve, netBase)) {
-        // Last buy case: buy all remaining tokens
-        tokensReceived = new BN(curve.realTokenReserves.toString());
-        // Calculate exact net base needed for these tokens
-        adjustedBaseAmount = this._getBaseForExactTokens(
+      let netBaseAmount = baseAmount.sub(feeAmount);
+      let willComplete = false;
+      if (
+        curve.baseRaiseTarget.gt(new BN(0)) &&
+        curve.realBaseReserves.add(netBaseAmount).gte(curve.baseRaiseTarget)
+      ) {
+        willComplete = true;
+      }
+      let tokenAmount = this._getTokensForBuyBase(
+        curve.virtualBaseReserves,
+        curve.virtualTokenReserves,
+        netBaseAmount
+      );
+      if (tokenAmount.gte(curve.realTokenReserves)) {
+        willComplete = true;
+        tokenAmount = new BN(curve.realTokenReserves.toString());
+        netBaseAmount = this._getBaseForExactTokens(
           curve.virtualBaseReserves,
           curve.virtualTokenReserves,
-          tokensReceived
+          tokenAmount
         );
-        // Calculate gross base needed (reverse fee math)
-        const grossBase = this._grossAmountFromNet(
-          adjustedBaseAmount,
+        baseAmount = this._grossAmountFromNet(
+          netBaseAmount,
           curve.startTime.toNumber(),
           currentTime
         );
-        // Recalculate fee for this gross amount
         const newFee = this._calculateFee(
           curve.startTime.toNumber(),
-          grossBase,
+          baseAmount,
           currentTime
         );
-        // Use these for reporting
-        adjustedBaseAmount = grossBase.sub(newFee);
-        tokensReceived = this._getTokensForBuyBase(
-          curve.virtualBaseReserves,
-          curve.virtualTokenReserves,
-          adjustedBaseAmount
-        );
-      } else {
-        // Normal case: calculate tokens for given net base
-        tokensReceived = this._getTokensForBuyBase(
-          curve.virtualBaseReserves,
-          curve.virtualTokenReserves,
-          netBase
-        );
+        netBaseAmount = baseAmount.sub(newFee);
       }
-
-      // Calculate price impact using virtual reserves
-      const virtualBase = curve.virtualBaseReserves;
-      const virtualToken = curve.virtualTokenReserves;
+      const pricePerToken = tokenAmount.gt(new BN(0))
+        ? Number(netBaseAmount.toString()) / Number(tokenAmount.toString())
+        : 0;
+      // slippage
+      const slippageBps = Math.floor(slippageTolerance * 100);
+      const minTokenAmount = tokenAmount
+        .mul(new BN(10000 - slippageBps))
+        .div(new BN(10000));
+      // spot price
       const spotPrice = this._calculateSpotPrice(
-        virtualBase,
-        virtualToken,
+        curve.virtualBaseReserves,
+        curve.virtualTokenReserves,
         curve.baseDecimals,
         curve.tokenDecimals
       );
-      const executionPrice = adjustedBaseAmount
-        .mul(new BN(10 ** curve.tokenDecimals))
-        .div(tokensReceived)
-        .div(new BN(10 ** curve.baseDecimals));
-      const priceImpactPercent = this._calculatePriceImpact(
-        spotPrice,
-        executionPrice
-      );
-
-      // Apply slippage tolerance
-      const slippageBps = Math.floor(slippageTolerance * 100);
-      const minTokenAmount = tokensReceived
-        .mul(new BN(10000 - slippageBps))
-        .div(new BN(10000));
-
-      // Calculate price per token in base
-      const tokenDecimalsFactor = Math.pow(10, curve.tokenDecimals);
-      const baseDecimalsFactor = Math.pow(10, curve.baseDecimals);
-      const baseInDecimal = adjustedBaseAmount
-        .div(new BN(baseDecimalsFactor))
-        .toNumber();
-      const tokensInDecimal = tokensReceived
-        .div(new BN(tokenDecimalsFactor))
-        .toNumber();
-      const pricePerToken =
-        tokensInDecimal > 0 ? baseInDecimal / tokensInDecimal : 0;
-
+      // execution price for price impact
+      const executionPrice = tokenAmount.gt(new BN(0))
+        ? netBaseAmount
+            .mul(new BN(10 ** curve.tokenDecimals))
+            .div(tokenAmount)
+            .div(new BN(10 ** curve.baseDecimals))
+        : new BN(0);
+      const priceImpact = this._calculatePriceImpact(spotPrice, executionPrice);
       return {
         success: true,
         data: {
-          expectedTokenAmount: tokensReceived,
+          tokenAmount,
           minTokenAmount,
-          priceImpact: priceImpactPercent,
-          fee,
+          priceImpact,
+          feeAmount,
           willComplete,
           tokenDecimals: curve.tokenDecimals,
           baseDecimals: curve.baseDecimals,
@@ -659,10 +634,10 @@ export class BondingCurveService {
     slippageTolerance: number = 0.5
   ): Promise<
     ServiceResponse<{
-      expectedBaseAmount: BN;
+      baseAmount: BN;
       minBaseAmount: BN;
       priceImpact: number;
-      fee: BN;
+      feeAmount: BN;
       tokenDecimals: number;
       baseDecimals: number;
       spotPrice: BN;
@@ -681,9 +656,7 @@ export class BondingCurveService {
           },
         };
       }
-
       const curve = curveResult.data;
-      // Calculate gross base out for tokenAmount
       const grossBase = this._getBaseForSellTokens(
         curve.virtualBaseReserves,
         curve.virtualTokenReserves,
@@ -698,56 +671,43 @@ export class BondingCurveService {
           },
         };
       }
-      // Calculate fee on output base
       const currentTime = Math.floor(Date.now() / 1000);
-      const fee = this._calculateFee(
+      const feeAmount = this._calculateFee(
         curve.startTime.toNumber(),
         grossBase,
         currentTime
       );
-      const netBase = grossBase.sub(fee);
-
-      // Calculate price impact
-      const virtualBase = curve.virtualBaseReserves;
-      const virtualToken = curve.virtualTokenReserves;
-      const spotPrice = this._calculateSpotPrice(
-        virtualBase,
-        virtualToken,
-        curve.baseDecimals,
-        curve.tokenDecimals
-      );
-      const executionPrice = grossBase
-        .mul(new BN(10 ** curve.tokenDecimals))
-        .div(tokenAmount)
-        .div(new BN(10 ** curve.baseDecimals));
-      const priceImpactPercent = this._calculatePriceImpact(
-        spotPrice,
-        executionPrice
-      );
-
-      // Apply slippage tolerance to net output
+      const netBase = grossBase.sub(feeAmount);
+      const pricePerToken = tokenAmount.gt(new BN(0))
+        ? Number(netBase.toString()) / Number(tokenAmount.toString())
+        : 0;
+      // slippage
       const slippageBps = Math.floor(slippageTolerance * 100);
       const minBaseAmount = netBase
         .mul(new BN(10000 - slippageBps))
         .div(new BN(10000));
-
-      // Calculate price per token in base
-      const tokenDecimalsFactor = Math.pow(10, curve.tokenDecimals);
-      const baseDecimalsFactor = Math.pow(10, curve.baseDecimals);
-      const baseInDecimal = netBase.div(new BN(baseDecimalsFactor)).toNumber();
-      const tokensInDecimal = tokenAmount
-        .div(new BN(tokenDecimalsFactor))
-        .toNumber();
-      const pricePerToken =
-        tokensInDecimal > 0 ? baseInDecimal / tokensInDecimal : 0;
-
+      // spot price
+      const spotPrice = this._calculateSpotPrice(
+        curve.virtualBaseReserves,
+        curve.virtualTokenReserves,
+        curve.baseDecimals,
+        curve.tokenDecimals
+      );
+      // execution price for price impact
+      const executionPrice = tokenAmount.gt(new BN(0))
+        ? grossBase
+            .mul(new BN(10 ** curve.tokenDecimals))
+            .div(tokenAmount)
+            .div(new BN(10 ** curve.baseDecimals))
+        : new BN(0);
+      const priceImpact = this._calculatePriceImpact(spotPrice, executionPrice);
       return {
         success: true,
         data: {
-          expectedBaseAmount: netBase,
+          baseAmount: netBase,
           minBaseAmount,
-          priceImpact: priceImpactPercent,
-          fee,
+          priceImpact,
+          feeAmount,
           tokenDecimals: curve.tokenDecimals,
           baseDecimals: curve.baseDecimals,
           spotPrice,
@@ -833,29 +793,21 @@ export class BondingCurveService {
     }
   }
 
-  // Helper functions for simulation (copied from BondingCurveSimulator(programs/bonding-curve/clients/BondingCurveSimulator))
-  /**
-   * Check if buying a specific amount of tokens would complete the bonding curve
-   */
+  // Helper functions for simulation (camelCase fields)
   private _willCompleteBondingCurve(
     bondingCurve: any,
     baseAmount: BN
   ): boolean {
-    // Case 1: Check if the purchase would exceed SOL raise target
-    if (bondingCurve.solRaiseTarget.gt(new BN(0))) {
-      const potentialSolReserves = bondingCurve.realSolReserves.add(baseAmount);
-      if (potentialSolReserves.gte(bondingCurve.solRaiseTarget)) {
+    if (bondingCurve.baseRaiseTarget.gt(new BN(0))) {
+      const potentialBaseReserves =
+        bondingCurve.realBaseReserves.add(baseAmount);
+      if (potentialBaseReserves.gte(bondingCurve.baseRaiseTarget)) {
         return true;
       }
     }
-
-    // Case 2: Check if the purchase would buy all remaining tokens
     return this._wouldExceedTokenReserves(bondingCurve, baseAmount);
   }
 
-  /**
-   * Check if buying this much SOL would exceed the available token reserves
-   */
   private _wouldExceedTokenReserves(
     bondingCurve: any,
     baseAmount: BN
@@ -868,40 +820,122 @@ export class BondingCurveService {
     return tokensReceived.gte(bondingCurve.realTokenReserves);
   }
 
-  /**
-   * Calculate fee based on time since curve started
-   */
   private _calculateFee(
     startTime: number,
     amount: BN,
     currentTime: number
   ): BN {
-    if (currentTime < startTime) {
+    if (currentTime < startTime)
       throw new Error("Current time before curve start time");
-    }
-
-    const timeDiff = Math.max(0, currentTime - startTime);
-    const slotsPassed = Math.floor(timeDiff / 400); // Convert time diff to slots (400ms per slot)
-
+    const decayPeriod = 7 * 24 * 60 * 60; // 7 days in seconds
+    const startFee = 1000; // 10% in bps
+    const minFee = 100; // 1% in bps
+    const elapsed = Math.max(0, currentTime - startTime);
     let feeBps: number;
-
-    if (slotsPassed < 150) {
-      feeBps = 9900; // 99% fee
-    } else if (slotsPassed >= 150 && slotsPassed <= 250) {
-      // Linear decrease using the exact formula from Rust implementation
-      const feeBpsRaw = (-8_300_000 * slotsPassed + 2_162_600_000) / 1_000_000;
-      feeBps = Math.max(0, Math.min(10000, feeBpsRaw));
+    if (elapsed >= decayPeriod) {
+      feeBps = minFee;
     } else {
-      feeBps = 100; // 1% fee
+      const decay = Math.floor(((startFee - minFee) * elapsed) / decayPeriod);
+      feeBps = startFee - decay;
     }
-
-    // Cap at 10% of amount
     const amountBigInt = BigInt(amount.toString());
     const feeBigInt = (amountBigInt * BigInt(feeBps)) / BigInt(10000);
-    const capBigInt = amountBigInt / BigInt(10);
+    return new BN(feeBigInt.toString());
+  }
 
-    const finalFeeBigInt = feeBigInt < capBigInt ? feeBigInt : capBigInt;
-    return new BN(finalFeeBigInt.toString());
+  private _getTokensForBuyBase(
+    virtualBaseReserves: BN,
+    virtualTokenReserves: BN,
+    baseAmount: BN
+  ): BN {
+    if (baseAmount.isZero()) throw new Error("Base amount cannot be zero");
+    const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
+    const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
+    const baseAmountBigInt = BigInt(baseAmount.toString());
+    const k = baseReservesBigInt * tokenReservesBigInt;
+    const newVirtualBaseReserves = baseReservesBigInt + baseAmountBigInt;
+    const newVirtualTokenReserves = k / newVirtualBaseReserves;
+    const tokensReceivedBigInt = tokenReservesBigInt - newVirtualTokenReserves;
+    return new BN(tokensReceivedBigInt.toString());
+  }
+
+  private _getBaseForSellTokens(
+    virtualBaseReserves: BN,
+    virtualTokenReserves: BN,
+    tokenAmount: BN
+  ): BN {
+    if (tokenAmount.isZero()) throw new Error("Token amount cannot be zero");
+    const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
+    const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
+    const tokenAmountBigInt = BigInt(tokenAmount.toString());
+    const k = baseReservesBigInt * tokenReservesBigInt;
+    const newVirtualTokenReserves = tokenReservesBigInt + tokenAmountBigInt;
+    const newVirtualBaseReserves = k / newVirtualTokenReserves;
+    const baseReceivedBigInt = baseReservesBigInt - newVirtualBaseReserves;
+    return new BN(baseReceivedBigInt.toString());
+  }
+
+  private _getBaseForExactTokens(
+    virtualBaseReserves: BN,
+    virtualTokenReserves: BN,
+    tokenAmount: BN
+  ): BN {
+    if (tokenAmount.isZero()) throw new Error("Token amount cannot be zero");
+    const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
+    const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
+    const tokenAmountBigInt = BigInt(tokenAmount.toString());
+    const k = baseReservesBigInt * tokenReservesBigInt;
+    const newVirtualTokenReserves = tokenReservesBigInt - tokenAmountBigInt;
+    if (newVirtualTokenReserves <= BigInt(0)) {
+      throw new Error("Token amount exceeds virtual token reserves");
+    }
+    const newVirtualBaseReserves = k / newVirtualTokenReserves;
+    const baseNeededBigInt = newVirtualBaseReserves - baseReservesBigInt;
+    return new BN(baseNeededBigInt.toString());
+  }
+
+  private _grossAmountFromNet(
+    net: BN,
+    startTime: number,
+    currentTime: number
+  ): BN {
+    const feeBps = this._getFeeBps(startTime, currentTime);
+    const denominator = 10000 - feeBps;
+    return net.mul(new BN(10000)).div(new BN(denominator));
+  }
+
+  private _getFeeBps(startTime: number, currentTime: number): number {
+    if (currentTime < startTime) return 0;
+    const decayPeriod = 7 * 24 * 60 * 60;
+    const startFee = 1000;
+    const minFee = 100;
+    const elapsed = Math.max(0, currentTime - startTime);
+    if (elapsed >= decayPeriod) return minFee;
+    const decay = Math.floor(((startFee - minFee) * elapsed) / decayPeriod);
+    return startFee - decay;
+  }
+
+  private _calculateSpotPrice(
+    virtualBase: BN,
+    virtualToken: BN,
+    baseDecimals: number,
+    tokenDecimals: number
+  ): BN {
+    const baseBigInt = BigInt(virtualBase.toString());
+    const tokenBigInt = BigInt(virtualToken.toString());
+    const result =
+      (baseBigInt * BigInt(10 ** tokenDecimals)) /
+      (tokenBigInt * BigInt(10 ** baseDecimals));
+    return new BN(result.toString());
+  }
+
+  private _calculatePriceImpact(spotPrice: BN, executionPrice: BN): number {
+    const spotBigInt = BigInt(spotPrice.toString());
+    const execBigInt = BigInt(executionPrice.toString());
+    if (spotBigInt === BigInt(0)) return 0;
+    const impactBigInt =
+      (execBigInt * BigInt(10000)) / spotBigInt - BigInt(10000);
+    return Number(impactBigInt) / 100;
   }
 
   /** Migrate to Raydium and claim LP tokens in a single transaction */
@@ -950,13 +984,16 @@ export class BondingCurveService {
       const authorityAddress = proposalData.authorityAddress;
 
       // Find related PDAs for Raydium integration
-      const baseMint = new PublicKey(WSOL_ID);
+      const baseMint = new PublicKey(curveResult.data.baseMint);
+      // Get ordered mints - this is a key change
+      const [token0Mint, token1Mint] = this.getOrderedMints(baseMint, mint);
+
       const poolState = this.findPoolStatePda(mint, baseMint);
       const authority = this.findCpmmAuthorityPda();
       const observationState = this.findObservationStatePda(poolState);
       const lpMint = this.findLpMintPda(poolState);
-      const token0Vault = this.findTokenVaultPda(poolState, baseMint);
-      const token1Vault = this.findTokenVaultPda(poolState, mint);
+      const token0Vault = this.findTokenVaultPda(poolState, token0Mint);
+      const token1Vault = this.findTokenVaultPda(poolState, token1Mint);
 
       // Get token accounts
       const bondingCurveTokenAccount = this.getAssociatedTokenAddress(
@@ -972,14 +1009,34 @@ export class BondingCurveService {
         mint,
         authorityAddress
       );
+      const proposalBaseAccount = this.getAssociatedTokenAddress(
+        baseMint,
+        proposalData.authorityAddress
+      );
       const creatorLpTokenAccount = this.getAssociatedTokenAddress(
         lpMint,
         creator
       );
 
-      const proposalBaseAccount = this.getAssociatedTokenAddress(
+      // Get ordered accounts - key change
+      const {
+        token0Mint: orderedToken0Mint,
+        token1Mint: orderedToken1Mint,
+        token0Account,
+        token1Account,
+        proposalToken0Account,
+        proposalToken1Account,
+        token0Program,
+        token1Program,
+      } = this.getOrderedMintAccounts(
         baseMint,
-        proposalData.authorityAddress
+        mint,
+        bondingCurveBaseTokenAccount,
+        bondingCurveTokenAccount,
+        proposalBaseAccount,
+        proposalTokenAccount,
+        TOKEN_PROGRAM_ID,
+        TOKEN_PROGRAM_ID
       );
 
       // Create the transaction with increased compute units
@@ -987,35 +1044,36 @@ export class BondingCurveService {
         units: 1_000_000,
       });
 
-      // Create Raydium pool instruction
+      // Create Raydium pool instruction - using ordered accounts
       const createRaydiumPoolIx = await this.program.methods
         .createRaydiumPool()
         .accountsPartial({
           creator,
           global: globalPda,
           feeReceiver,
-          tokenMint: mint,
-          baseMint,
+          token0Mint: orderedToken0Mint,
+          token1Mint: orderedToken1Mint,
           bondingCurve: curve,
-          bondingCurveTokenAccount,
-          bondingCurveBaseAccount: bondingCurveBaseTokenAccount,
-          proposalBaseAccount: proposalBaseAccount,
+          projectToken: mint,
+          token0Account,
+          token1Account,
+          proposal,
           proposalTreasury: treasuryAddress,
           proposalAuthority: authorityAddress,
-          proposalTokenAccount,
+          proposalToken0Account,
+          proposalToken1Account,
           cpSwapProgram: new PublicKey(CPMM_PROGRAM_ID),
           ammConfig: new PublicKey(AMM_CONFIG_ID),
           authority,
           poolState,
           lpMint,
-          proposal,
           bondingCurveLpToken,
           token0Vault,
           token1Vault,
           createPoolFee: new PublicKey(RAYDIUM_CREATE_POOL_FEE),
           observationState,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          token1Program: TOKEN_PROGRAM_ID,
+          tokenProgram: token0Program,
+          token1Program,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: web3.SystemProgram.programId,
           rent: web3.SYSVAR_RENT_PUBKEY,
@@ -1064,123 +1122,49 @@ export class BondingCurveService {
     }
   }
 
-  // Add/rename helpers for base-token math
-  private _getTokensForBuyBase(
-    virtualBaseReserves: BN,
-    virtualTokenReserves: BN,
-    baseAmount: BN
-  ): BN {
-    if (baseAmount.isZero()) {
-      throw new Error("Base amount cannot be zero");
-    }
-    try {
-      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
-      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
-      const baseAmountBigInt = BigInt(baseAmount.toString());
-      const k = baseReservesBigInt * tokenReservesBigInt;
-      const newVirtualBaseReserves = baseReservesBigInt + baseAmountBigInt;
-      const newVirtualTokenReserves = k / newVirtualBaseReserves;
-      const tokensReceivedBigInt =
-        tokenReservesBigInt - newVirtualTokenReserves;
-      return new BN(tokensReceivedBigInt.toString());
-    } catch (error) {
-      throw new Error("Failed to calculate token amount");
-    }
+  // Helper to deterministically order two mints for Raydium pool (token_0, token_1)
+  private getOrderedMints(
+    mintA: PublicKey,
+    mintB: PublicKey
+  ): [PublicKey, PublicKey] {
+    return mintA.toBuffer().compare(mintB.toBuffer()) < 0
+      ? [mintA, mintB]
+      : [mintB, mintA];
   }
 
-  private _getBaseForSellTokens(
-    virtualBaseReserves: BN,
-    virtualTokenReserves: BN,
-    tokenAmount: BN
-  ): BN {
-    if (tokenAmount.isZero()) {
-      throw new Error("Token amount cannot be zero");
-    }
-    try {
-      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
-      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
-      const tokenAmountBigInt = BigInt(tokenAmount.toString());
-      const k = baseReservesBigInt * tokenReservesBigInt;
-      const newVirtualTokenReserves = tokenReservesBigInt + tokenAmountBigInt;
-      const newVirtualBaseReserves = k / newVirtualTokenReserves;
-      const baseReceivedBigInt = baseReservesBigInt - newVirtualBaseReserves;
-      return new BN(baseReceivedBigInt.toString());
-    } catch (error) {
-      throw new Error("Failed to calculate base amount");
-    }
-  }
-
-  private _getBaseForExactTokens(
-    virtualBaseReserves: BN,
-    virtualTokenReserves: BN,
-    tokenAmount: BN
-  ): BN {
-    if (tokenAmount.isZero()) {
-      throw new Error("Token amount cannot be zero");
-    }
-    try {
-      const baseReservesBigInt = BigInt(virtualBaseReserves.toString());
-      const tokenReservesBigInt = BigInt(virtualTokenReserves.toString());
-      const tokenAmountBigInt = BigInt(tokenAmount.toString());
-      const k = baseReservesBigInt * tokenReservesBigInt;
-      const newVirtualTokenReserves = tokenReservesBigInt - tokenAmountBigInt;
-      if (newVirtualTokenReserves <= BigInt(0)) {
-        throw new Error("Token amount exceeds virtual token reserves");
-      }
-      const newVirtualBaseReserves = k / newVirtualTokenReserves;
-      const baseNeededBigInt = newVirtualBaseReserves - baseReservesBigInt;
-      return new BN(baseNeededBigInt.toString());
-    } catch (error) {
-      throw new Error("Failed to calculate base amount");
-    }
-  }
-
-  private _grossAmountFromNet(
-    net: BN,
-    startTime: number,
-    currentTime: number
-  ): BN {
-    const feeBps = this._getFeeBps(startTime, currentTime);
-    const denominator = 10000 - feeBps;
-    return net.mul(new BN(10000)).div(new BN(denominator));
-  }
-
-  private _getFeeBps(startTime: number, currentTime: number): number {
-    if (currentTime < startTime) return 0;
-    const timeDiff = Math.max(0, currentTime - startTime);
-    const slotsPassed = Math.floor(timeDiff / 400);
-    let feeBps: number;
-    if (slotsPassed < 150) {
-      feeBps = 9900; // 99%
-    } else if (slotsPassed >= 150 && slotsPassed <= 250) {
-      const feeBpsRaw = (-8_300_000 * slotsPassed + 2_162_600_000) / 1_000_000;
-      feeBps = Math.max(0, Math.min(10000, feeBpsRaw));
+  // Helper to deterministically order two mints and their associated accounts
+  private getOrderedMintAccounts(
+    baseMint: PublicKey,
+    tokenMint: PublicKey,
+    bondingCurveBaseAccount: PublicKey,
+    bondingCurveTokenAccount: PublicKey,
+    proposalBaseAccount: PublicKey,
+    proposalTokenAccount: PublicKey,
+    token0Program: PublicKey = TOKEN_PROGRAM_ID,
+    token1Program: PublicKey = TOKEN_PROGRAM_ID
+  ) {
+    if (baseMint.toBuffer().compare(tokenMint.toBuffer()) < 0) {
+      return {
+        token0Mint: baseMint,
+        token1Mint: tokenMint,
+        token0Account: bondingCurveBaseAccount,
+        token1Account: bondingCurveTokenAccount,
+        proposalToken0Account: proposalBaseAccount,
+        proposalToken1Account: proposalTokenAccount,
+        token0Program,
+        token1Program,
+      };
     } else {
-      feeBps = 100; // 1%
+      return {
+        token0Mint: tokenMint,
+        token1Mint: baseMint,
+        token0Account: bondingCurveTokenAccount,
+        token1Account: bondingCurveBaseAccount,
+        proposalToken0Account: proposalTokenAccount,
+        proposalToken1Account: proposalBaseAccount,
+        token0Program: token1Program,
+        token1Program: token0Program,
+      };
     }
-    return feeBps;
-  }
-
-  private _calculateSpotPrice(
-    virtualBase: BN,
-    virtualToken: BN,
-    baseDecimals: number,
-    tokenDecimals: number
-  ): BN {
-    const baseBigInt = BigInt(virtualBase.toString());
-    const tokenBigInt = BigInt(virtualToken.toString());
-    const result =
-      (baseBigInt * BigInt(10 ** tokenDecimals)) /
-      (tokenBigInt * BigInt(10 ** baseDecimals));
-    return new BN(result.toString());
-  }
-
-  private _calculatePriceImpact(spotPrice: BN, executionPrice: BN): number {
-    const spotBigInt = BigInt(spotPrice.toString());
-    const execBigInt = BigInt(executionPrice.toString());
-    if (spotBigInt === BigInt(0)) return 0;
-    const impactBigInt =
-      (execBigInt * BigInt(10000)) / spotBigInt - BigInt(10000);
-    return Number(impactBigInt) / 100;
   }
 }

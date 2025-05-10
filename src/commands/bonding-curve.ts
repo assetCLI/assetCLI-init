@@ -97,10 +97,10 @@ export function registerBondingCurveCommands(program: Command) {
           chalk.green("Global settings:"),
           JSON.stringify(globalState.data, null, 2)
         );
-        const cluster = await ConnectionService.getCluster();
+        // const cluster = await ConnectionService.getCluster();
         console.log(
           chalk.blue(
-            `Transaction signature: ${getExplorerTx(tx.data, cluster.data!)}`
+            `Transaction signature: ${tx.data}}`
           )
         );
       } catch (error) {

@@ -8,30 +8,30 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 
 export function registerConfigAndWalletTools(server: McpServer) {
   server.tool(
-    "setCluster",
-    "Used to set the cluster to devnet, testnet, or mainnet. Cluster is nothing but the rpc url",
+    "setNetwork",
+    "Used to set the network to devnet, localnet, or mainnet. Network is nothing but the rpc url",
     {
-      cluster: z.string(),
+      network: z.string(),
     },
-    async ({ cluster }) => {
+    async ({ network }) => {
       try {
-        if (cluster === "devnet") {
-          await ConfigService.setCluster("devnet");
-        } else if (cluster === "testnet") {
-          await ConfigService.setCluster("testnet");
-        } else if (cluster === "mainnet" || cluster === "mainnet-beta") {
-          await ConfigService.setCluster("mainnet-beta");
+        if (network === "devnet") {
+          await ConfigService.setNetwork("devnet");
+        } else if (network === "localnet") {
+          await ConfigService.setNetwork("localnet");
+        } else if (network === "mainnet") {
+          await ConfigService.setNetwork("mainnet");
         } else {
           return {
-            content: [{ type: "text", text: `Invalid cluster: ${cluster}` }],
+            content: [{ type: "text", text: `Invalid network: ${network}` }],
           };
         }
         return {
-          content: [{ type: "text", text: `Cluster set to ${cluster}` }],
+          content: [{ type: "text", text: `Network set to ${network}` }],
         };
       } catch (error) {
         return {
-          content: [{ type: "text", text: `Failed to set cluster: ${error}` }],
+          content: [{ type: "text", text: `Failed to set network: ${error}` }],
         };
       }
     }
@@ -39,7 +39,7 @@ export function registerConfigAndWalletTools(server: McpServer) {
 
   server.tool(
     "showConfig",
-    "Displays the current configuration of the daoCLI",
+    "Displays the current configuration of the assetCLI",
     {},
     async () => {
       try {

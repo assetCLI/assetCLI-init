@@ -190,7 +190,10 @@ impl<'info> CreateRaydiumPool<'info> {
     }
 
     pub fn fund_vault_for_pool_creation(&self) -> Result<()> {
-        let required_lamports = LAMPORTS_PER_SOL.checked_div(2u64).unwrap(); // An expected amount for pool creation and other transfers
+        let required_lamports = LAMPORTS_PER_SOL.checked_mul(12u64)
+            .unwrap()
+            .checked_div(10u64)
+            .unwrap(); // An expected amount for pool creation and other transfers
         let transfer_ix = system_instruction::transfer(
             self.creator.key,
             self.bonding_curve_vault.key,

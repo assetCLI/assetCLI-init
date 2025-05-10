@@ -1,16 +1,15 @@
 import { PublicKey, Cluster } from "@solana/web3.js";
 import BN from "bn.js";
 import { BondingCurve } from "./bonding_curve";
+
 export interface WalletConfig {
   keypair: number[]; // Serialized keypair
   pubkey: string;
 }
 
-export interface DaoConfig {
-  activeRealm?: string;
-  activeMultisig?: string; // For backwards compatibility
-  cluster: Cluster;
-  endpoint: string;
+export interface NetworkConfig {
+  rpcUrl: string;
+  name: string; // e.g. "devnet", "mainnet", "testnet"
 }
 
 export interface SquadsMultisigConfig {
@@ -24,7 +23,7 @@ export interface BondingCurveConfig {
 
 export interface Config {
   wallet?: WalletConfig;
-  dao?: DaoConfig;
+  network: NetworkConfig;
   squadsMultisig?: SquadsMultisigConfig;
   bondingCurve?: BondingCurveConfig;
 }

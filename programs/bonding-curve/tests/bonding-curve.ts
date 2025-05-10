@@ -26,7 +26,6 @@ import path from "path";
 import assert from "assert";
 import { Connection, Keypair, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { BN } from "bn.js";
-import { connect } from "http2";
 
 describe("bonding-curve", async () => {
   // const baseMint = new anchor.web3.PublicKey(
@@ -112,20 +111,30 @@ describe("bonding-curve", async () => {
 
   // Define Raydium program and constants
   const CPMM_PROGRAM_ID = new anchor.web3.PublicKey(
-    "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
+    // "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C" //mainnet
+    "CPMDWBwJDtYax9qW7AyRuVC19Cc4L4Vcy4n2BHAbHkCW" //devnet
   );
   const AMM_CONFIG_ID = new anchor.web3.PublicKey(
-    "D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2"
+    // "D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2" //mainnet
+    "9zSzfkYy6awexsHvmggeH36pfVUdDGyCcwmjT3AQPBj6" //devnet
   );
 
-  // Address of the Locking CPMM program on devnet
+  // Address of the Locking CPMM program
   const LOCK_CPMM_PROGRAM_ID = new anchor.web3.PublicKey(
-    "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE"
+    // "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE" //mainnet
+    "DLockwT7X7sxtLmGH9g5kmfcjaBtncdbUmi738m5bvQC" //devnet
   );
 
-  // Address of the Locking CPMM program on devnet
+  // Address of the Locking CPMM authority
   const LOCK_CPMM_AUTHORITY_ID = new anchor.web3.PublicKey(
-    "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+    // "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH" // mainnet
+    "7AFUeLVRjBfzqK3tTGw8hN48KLQWSk6DTE8xprWdPqix" //devnet
+  );
+
+  // Pool Fee Reciever
+  const POOL_FEE_RECIEVER = new anchor.web3.PublicKey(
+    // "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8" //mainnet
+    "G11FKBRaAkHAKuLCgLM6K6NUc9rTjPAznRCjZifrTQe2" //devnet
   );
 
   // Address of the Memo program
@@ -563,7 +572,7 @@ describe("bonding-curve", async () => {
     // First, we need to make sure we have a completed bonding curve
     // Fetch our existing bonding curve account
     const raydiumAdmin = new anchor.web3.PublicKey(
-      "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ" // Use devnet version if testing on devnet
+      "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ" // Use devnet version if testing
     );
     const bondingCurve =
       await program.account.bondingCurve.fetch(bondingCurvePda);
@@ -727,9 +736,7 @@ describe("bonding-curve", async () => {
           bondingCurveLpToken: bondingCurveVaultLPToken,
           token0Vault: token_vault_0,
           token1Vault: token_vault_1,
-          createPoolFee: new anchor.web3.PublicKey(
-            "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8"
-          ),
+          createPoolFee: POOL_FEE_RECIEVER,
           observationState: observationState,
           tokenProgram: token0Program,
           token1Program: token1Program,
@@ -820,8 +827,8 @@ describe("bonding-curve", async () => {
         systemProgram: anchor.web3.SystemProgram.programId,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
         tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        baseMint: baseMint,
-        tokenMint: mintKey,
+        baseMint: token0Mint,
+        tokenMint: token1Mint,
         cpSwapProgram: CPMM_PROGRAM_ID,
         user: wallet.publicKey,
         userLpTokenAccount: creatorLpTokenAccount,
@@ -850,6 +857,23 @@ describe("bonding-curve", async () => {
       wallet.publicKey,
       true
     );
+    const {
+      token0Mint,
+      token1Mint,
+      token0Account,
+      token1Account,
+      proposalToken0Account,
+      proposalToken1Account,
+      token0Program,
+      token1Program,
+    } = getOrderedMintAccounts(
+      baseMint,
+      mintKey,
+      userBaseTokenAccount.address,
+      userTokenAccount.address,
+      userBaseTokenAccount.address,
+      userTokenAccount.address
+    );
     const claimTx = await program.methods
       .harvestLockedCpmmLiquidity()
       .accountsPartial({
@@ -863,16 +887,16 @@ describe("bonding-curve", async () => {
         cpAuthority: authority,
         poolState,
         lpMint: lp_mint,
-        baseVault: userBaseTokenAccount.address,
-        tokenVault: userTokenAccount.address,
+        baseVault: token0Account,
+        tokenVault: token1Account,
         token0Vault: token_vault_0,
         token1Vault: token_vault_1,
-        baseMint: baseMint,
-        tokenMint: mintKey,
+        baseMint: token0Mint,
+        tokenMint: token1Mint,
         lockedLpVault: lockedLpVault,
         systemProgram: anchor.web3.SystemProgram.programId,
         memoProgram: MEMO_PROGRAM,
-        token0Program: anchor.utils.token.TOKEN_PROGRAM_ID,
+        token0Program: TOKEN_PROGRAM_ID,
         token1Program: TOKEN_2022_PROGRAM_ID,
       })
       .rpc();
@@ -909,6 +933,23 @@ describe("bonding-curve", async () => {
     //   }),
     //   createSyncNativeInstruction(userBaseTokenAccount)
     // );
+    const {
+      token0Mint,
+      token1Mint,
+      token0Account,
+      token1Account,
+      proposalToken0Account,
+      proposalToken1Account,
+      token0Program,
+      token1Program,
+    } = getOrderedMintAccounts(
+      baseMint,
+      mintKey,
+      userBaseTokenAccount,
+      userTokenAccount,
+      userBaseTokenAccount,
+      userTokenAccount
+    );
     const tx = new anchor.web3.Transaction();
     const swapIx = await program.methods
       .raydiumSwap(new anchor.BN(1 * LAMPORTS_PER_SOL), new BN(500))
@@ -918,14 +959,14 @@ describe("bonding-curve", async () => {
         authority: authority,
         ammConfig: AMM_CONFIG_ID,
         poolState,
-        inputTokenAccount: userBaseTokenAccount,
-        outputTokenAccount: userTokenAccount,
+        inputTokenAccount: token0Account,
+        outputTokenAccount: token1Account,
         inputVault: token_vault_0,
         outputVault: token_vault_1,
         inputTokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
         outputTokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        inputTokenMint: baseMint,
-        outputTokenMint: mintKey,
+        inputTokenMint: token0Mint,
+        outputTokenMint: token1Mint,
         observationState,
       })
       .instruction();
@@ -1127,6 +1168,10 @@ describe("bonding-curve", async () => {
       throw err;
     }
   });
+  it("Get Solana clock", async () => {
+    const clock = await getSolanaClock(program.provider.connection);
+    console.log("Current Solana clock time:", clock);
+  });
 });
 
 function getTransactionOnExplorer(tx: string): string {
@@ -1177,4 +1222,14 @@ function getOrderedMintAccounts(
       token1Program: token0Program,
     };
   }
+}
+async function getSolanaClock(conn: Connection): Promise<Number> {
+  const clock = anchor.web3.SYSVAR_CLOCK_PUBKEY;
+  const clockInfo = await conn.getAccountInfo(clock);
+  if (!clockInfo) {
+    throw new Error("Clock account not found");
+  }
+  const unixTimestamp = clockInfo.data.readBigUInt64LE(32);
+  const unixTime = Number(unixTimestamp);
+  return unixTime;
 }

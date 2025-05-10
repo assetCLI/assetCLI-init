@@ -2,11 +2,10 @@ import fs from "fs-extra";
 import {
   CONFIG_PATH,
   CONFIG_DIR,
-  DEFAULT_CLUSTER,
-  ENDPOINT_MAP,
+  DEFAULT_NETWORK,
+  NETWORK_MAP,
 } from "../utils/constants";
-import { Config, DaoConfig } from "../types";
-import { Cluster } from "@solana/web3.js";
+import { Config, NetworkConfig } from "../types";
 import { ServiceResponse } from "../types/service-types";
 
 export class ConfigService {
@@ -16,10 +15,7 @@ export class ConfigService {
 
       if (!fs.existsSync(CONFIG_PATH)) {
         const defaultConfig: Config = {
-          dao: {
-            cluster: DEFAULT_CLUSTER as Cluster,
-            endpoint: ENDPOINT_MAP[DEFAULT_CLUSTER as Cluster],
-          },
+          network: DEFAULT_NETWORK
         };
         await fs.writeJSON(CONFIG_PATH, defaultConfig, { spaces: 2 });
         return { success: true, data: defaultConfig };
@@ -54,8 +50,9 @@ export class ConfigService {
     }
   }
 
-  static async updateDaoConfig(
-    daoConfig: Partial<DaoConfig>
+  static async setNetwork(
+    networkName: string,
+    customRpcUrl?: string
   ): Promise<ServiceResponse<Config>> {
     try {
       const configResponse = await this.getConfig();
@@ -64,17 +61,20 @@ export class ConfigService {
       }
 
       const config = configResponse.data;
-      config.dao = {
-        ...config.dao,
-        ...daoConfig,
-      } as DaoConfig;
+      const networkConfig =
+        NETWORK_MAP[networkName as keyof typeof NETWORK_MAP] || {
+          name: networkName,
+          rpcUrl: customRpcUrl || DEFAULT_NETWORK.rpcUrl,
+        };
+
+      config.network = networkConfig;
 
       const saveResponse = await this.saveConfig(config);
       if (!saveResponse.success) {
         return {
           success: false,
           error: {
-            message: "Failed to update DAO config",
+            message: "Failed to update network config",
             details: saveResponse.error,
           },
           data: config,
@@ -86,61 +86,11 @@ export class ConfigService {
       return {
         success: false,
         error: {
-          message: "Failed to update DAO config",
+          message: "Failed to update network config",
           details: error,
         },
       };
     }
-  }
-
-  static async setActiveRealm(
-    realmAddress: string
-  ): Promise<ServiceResponse<Config>> {
-    try {
-      const configResponse = await this.getConfig();
-      if (!configResponse.success || !configResponse.data) {
-        return configResponse;
-      }
-
-      const config = configResponse.data;
-      config.dao = {
-        ...config.dao,
-        activeRealm: realmAddress,
-      } as DaoConfig;
-
-      const saveResponse = await this.saveConfig(config);
-      if (!saveResponse.success) {
-        return {
-          success: false,
-          error: {
-            message: "Failed to set active realm",
-            details: saveResponse.error,
-          },
-          data: config,
-        };
-      }
-
-      return { success: true, data: config };
-    } catch (error) {
-      return {
-        success: false,
-        error: {
-          message: "Failed to set active realm",
-          details: error,
-        },
-      };
-    }
-  }
-
-  static async setCluster(
-    cluster: Cluster,
-    endpoint?: string
-  ): Promise<ServiceResponse<Config>> {
-    const effectiveEndpoint = endpoint || ENDPOINT_MAP[cluster];
-    return this.updateDaoConfig({
-      cluster,
-      endpoint: effectiveEndpoint,
-    });
   }
 
   static async resetConfig(): Promise<ServiceResponse<void>> {
@@ -199,9 +149,7 @@ export class ConfigService {
     }
   }
 
-  static async getActiveSquadsMultisig(): Promise<
-    ServiceResponse<string | undefined>
-  > {
+  static async getActiveSquadsMultisig(): Promise<ServiceResponse<string | undefined>> {
     try {
       const configResponse = await this.getConfig();
       if (!configResponse.success || !configResponse.data) {
@@ -226,83 +174,6 @@ export class ConfigService {
         success: false,
         error: {
           message: "Failed to get active Squads multisig",
-          details: error,
-        },
-      };
-    }
-  }
-
-  static async setBondingCurveConfig(
-    bondingCurveAddress: string,
-    mintAddress: string
-  ): Promise<ServiceResponse<Config>> {
-    try {
-      const configResponse = await this.getConfig();
-      if (!configResponse.success || !configResponse.data) {
-        return configResponse;
-      }
-
-      const config = configResponse.data;
-      // Initialize bondingCurve if it doesn't exist
-      if (!config.bondingCurve) {
-        config.bondingCurve = {};
-      }
-
-      config.bondingCurve.bondingCurveAddress = bondingCurveAddress;
-      config.bondingCurve.mint = mintAddress;
-
-      const saveResponse = await this.saveConfig(config);
-      if (!saveResponse.success) {
-        return {
-          success: false,
-          error: {
-            message: "Failed to set bonding curve config",
-            details: saveResponse.error,
-          },
-          data: config,
-        };
-      }
-
-      return { success: true, data: config };
-    } catch (error) {
-      return {
-        success: false,
-        error: {
-          message: "Failed to set bonding curve config",
-          details: error,
-        },
-      };
-    }
-  }
-
-  static async getBondingCurveConfig(): Promise<
-    ServiceResponse<{
-      bondingCurveAddress?: string | undefined;
-      mint?: string | undefined;
-    }>
-  > {
-    try {
-      const configResponse = await this.getConfig();
-      if (!configResponse.success || !configResponse.data) {
-        return {
-          success: false,
-          error: { message: "No bonding curve config found" },
-        };
-      }
-
-      const config = configResponse.data;
-      return {
-        success: true,
-        data: {
-          bondingCurveAddress: config.bondingCurve?.bondingCurveAddress,
-          mint: config.bondingCurve?.mint,
-        },
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: {
-          message: "Failed to get bonding curve config",
           details: error,
         },
       };

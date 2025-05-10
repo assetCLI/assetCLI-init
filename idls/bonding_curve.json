@@ -1456,7 +1456,7 @@
         },
         {
           "name": "authority",
-          "address": "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+          "writable": true
         },
         {
           "name": "fee_nft_account",
@@ -2114,7 +2114,7 @@
         },
         {
           "name": "authority",
-          "address": "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+          "writable": true
         },
         {
           "name": "fee_nft_mint",

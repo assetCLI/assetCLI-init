@@ -1462,7 +1462,7 @@ export type BondingCurve = {
         },
         {
           "name": "authority",
-          "address": "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+          "writable": true
         },
         {
           "name": "feeNftAccount",
@@ -2120,7 +2120,7 @@ export type BondingCurve = {
         },
         {
           "name": "authority",
-          "address": "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+          "writable": true
         },
         {
           "name": "feeNftMint",

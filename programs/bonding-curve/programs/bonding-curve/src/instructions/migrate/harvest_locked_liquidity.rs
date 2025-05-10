@@ -1,20 +1,15 @@
 use anchor_lang::prelude::*;
-use anchor_spl::{
-    memo::spl_memo,
-    token_interface::{Mint, TokenAccount, TokenInterface},
-};
+use anchor_spl::{ memo::spl_memo, token_interface::{ Mint, TokenAccount, TokenInterface } };
 use raydium_cpmm_cpi::{
     program::RaydiumCpmm,
-    states::{AmmConfig, POOL_LP_MINT_SEED, POOL_VAULT_SEED},
+    states::{ AmmConfig, POOL_LP_MINT_SEED, POOL_VAULT_SEED },
 };
 
 use raydium_locking_cpi::{
     cpi,
     program::RaydiumLiquidityLocking,
-    states::{LockedCpLiquidityState, LOCKED_LIQUIDITY_SEED},
+    states::{ LockedCpLiquidityState, LOCKED_LIQUIDITY_SEED },
 };
-
-use crate::constants::LOCK_CPMM_AUTHORITY;
 
 #[derive(Accounts)]
 pub struct HarvestLockedLiquidity<'info> {
@@ -24,7 +19,7 @@ pub struct HarvestLockedLiquidity<'info> {
     pub creator: Signer<'info>,
     pub amm_config: Account<'info, AmmConfig>,
     /// CHECK: the authority of token vault that cp is locked
-    #[account(address = LOCK_CPMM_AUTHORITY)]
+    #[account(mut)]
     pub authority: UncheckedAccount<'info>,
     #[account(
         mut,
@@ -44,11 +39,9 @@ pub struct HarvestLockedLiquidity<'info> {
     pub locked_liquidity: Account<'info, LockedCpLiquidityState>,
     /// CHECK: pool vault and lp mint authority
     #[account(
-        seeds = [
-            raydium_cpmm_cpi::AUTH_SEED.as_bytes(),
-        ],
+        seeds = [raydium_cpmm_cpi::AUTH_SEED.as_bytes()],
         seeds::program = cp_swap_program.key(),
-        bump,
+        bump
     )]
     pub cp_authority: UncheckedAccount<'info>,
     /// CHECK:
@@ -112,9 +105,7 @@ pub struct HarvestLockedLiquidity<'info> {
     pub locked_lp_vault: Box<InterfaceAccount<'info, TokenAccount>>,
     pub system_program: Program<'info, System>,
     /// CHECK: memo program checked by constraint
-    #[account(
-        address = spl_memo::id()
-    )]
+    #[account(address = spl_memo::id())]
     pub memo_program: UncheckedAccount<'info>,
     pub token_0_program: Interface<'info, TokenInterface>,
     pub token_1_program: Interface<'info, TokenInterface>,

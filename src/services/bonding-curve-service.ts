@@ -19,15 +19,9 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   getTokenMetadata,
-  TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
 import { ServiceResponse } from "../types/service-types";
-import {
-  AMM_CONFIG_ID,
-  CPMM_PROGRAM_ID,
-  METADATA_PROGRAM_ID,
-  RAYDIUM_CREATE_POOL_FEE,
-} from "../utils/constants";
+import { METADATA_PROGRAM_ID, RAYDIUM_PROGRAM_IDS } from "../utils/constants";
 import {
   GlobalInitParams,
   CreateBondingCurveParams,
@@ -52,18 +46,20 @@ export class BondingCurveService {
   private program: Program<BondingCurve>;
   private provider: AnchorProvider;
   private idl: Idl;
-
+  private networkName: string;
   constructor(
     connection: Connection,
     wallet: Wallet,
     commitment: Commitment = "confirmed",
-    idl: Idl
+    idl: Idl,
+    networkName: string = "mainnet"
   ) {
     this.provider = new AnchorProvider(connection, wallet, {
       commitment,
     });
     this.idl = idl;
     this.program = new Program(this.idl, this.provider);
+    this.networkName = networkName;
   }
 
   // PDA helpers
@@ -107,9 +103,14 @@ export class BondingCurveService {
   }
 
   private findMetadataPda(mint: PublicKey): PublicKey {
-    const umi = createUmi(this.provider.connection);
-    const [meta] = findMetadataPda(umi, { mint: publicKey(mint) });
-    return new PublicKey(meta.toString());
+    return PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("metadata"),
+        new PublicKey(METADATA_PROGRAM_ID).toBuffer(),
+        mint.toBuffer(),
+      ],
+      new PublicKey(METADATA_PROGRAM_ID)
+    )[0];
   }
 
   private getAssociatedTokenAddress(
@@ -126,32 +127,52 @@ export class BondingCurveService {
     return PublicKey.findProgramAddressSync(
       [
         Buffer.from("pool"),
-        new PublicKey(AMM_CONFIG_ID).toBuffer(),
+        new PublicKey(
+          this.networkName == "devnet"
+            ? RAYDIUM_PROGRAM_IDS["devnet"].AMM_CONFIG_ID
+            : RAYDIUM_PROGRAM_IDS["_"].AMM_CONFIG_ID
+        ).toBuffer(),
         token0Mint.toBuffer(),
         token1Mint.toBuffer(),
       ],
-      new PublicKey(CPMM_PROGRAM_ID)
+      new PublicKey(
+        this.networkName == "devnet"
+          ? RAYDIUM_PROGRAM_IDS["devnet"].CPMM_PROGRAM_ID
+          : RAYDIUM_PROGRAM_IDS["_"].CPMM_PROGRAM_ID
+      )
     )[0];
   }
 
   private findCpmmAuthorityPda(): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from("vault_and_lp_mint_auth_seed")],
-      new PublicKey(CPMM_PROGRAM_ID)
+      new PublicKey(
+        this.networkName == "devnet"
+          ? RAYDIUM_PROGRAM_IDS["devnet"].CPMM_PROGRAM_ID
+          : RAYDIUM_PROGRAM_IDS["_"].CPMM_PROGRAM_ID
+      )
     )[0];
   }
 
   private findObservationStatePda(poolState: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from("observation"), poolState.toBuffer()],
-      new PublicKey(CPMM_PROGRAM_ID)
+      new PublicKey(
+        this.networkName == "devnet"
+          ? RAYDIUM_PROGRAM_IDS["devnet"].CPMM_PROGRAM_ID
+          : RAYDIUM_PROGRAM_IDS["_"].CPMM_PROGRAM_ID
+      )
     )[0];
   }
 
   private findLpMintPda(poolState: PublicKey): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from("pool_lp_mint"), poolState.toBuffer()],
-      new PublicKey(CPMM_PROGRAM_ID)
+      new PublicKey(
+        this.networkName == "devnet"
+          ? RAYDIUM_PROGRAM_IDS["devnet"].CPMM_PROGRAM_ID
+          : RAYDIUM_PROGRAM_IDS["_"].CPMM_PROGRAM_ID
+      )
     )[0];
   }
 
@@ -161,7 +182,11 @@ export class BondingCurveService {
   ): PublicKey {
     return PublicKey.findProgramAddressSync(
       [Buffer.from("pool_vault"), poolState.toBuffer(), tokenMint.toBuffer()],
-      new PublicKey(CPMM_PROGRAM_ID)
+      new PublicKey(
+        this.networkName == "devnet"
+          ? RAYDIUM_PROGRAM_IDS["devnet"].CPMM_PROGRAM_ID
+          : RAYDIUM_PROGRAM_IDS["_"].CPMM_PROGRAM_ID
+      )
     )[0];
   }
 
@@ -538,11 +563,11 @@ export class BondingCurveService {
       }
 
       const curve = curveResult.data;
-      const currentTime = Math.floor(Date.now() / 1000);
+      const currentTime = await this.getSolanaClock();
       const feeAmount = this._calculateFee(
         curve.startTime.toNumber(),
         baseAmount,
-        currentTime
+        currentTime as number
       );
       let netBaseAmount = baseAmount.sub(feeAmount);
       let willComplete = false;
@@ -568,12 +593,12 @@ export class BondingCurveService {
         baseAmount = this._grossAmountFromNet(
           netBaseAmount,
           curve.startTime.toNumber(),
-          currentTime
+          currentTime as number
         );
         const newFee = this._calculateFee(
           curve.startTime.toNumber(),
           baseAmount,
-          currentTime
+          currentTime as number
         );
         netBaseAmount = baseAmount.sub(newFee);
       }
@@ -791,33 +816,6 @@ export class BondingCurveService {
         },
       };
     }
-  }
-
-  // Helper functions for simulation (camelCase fields)
-  private _willCompleteBondingCurve(
-    bondingCurve: any,
-    baseAmount: BN
-  ): boolean {
-    if (bondingCurve.baseRaiseTarget.gt(new BN(0))) {
-      const potentialBaseReserves =
-        bondingCurve.realBaseReserves.add(baseAmount);
-      if (potentialBaseReserves.gte(bondingCurve.baseRaiseTarget)) {
-        return true;
-      }
-    }
-    return this._wouldExceedTokenReserves(bondingCurve, baseAmount);
-  }
-
-  private _wouldExceedTokenReserves(
-    bondingCurve: any,
-    baseAmount: BN
-  ): boolean {
-    const tokensReceived = this._getTokensForBuyBase(
-      bondingCurve.virtualBaseReserves,
-      bondingCurve.virtualTokenReserves,
-      baseAmount
-    );
-    return tokensReceived.gte(bondingCurve.realTokenReserves);
   }
 
   private _calculateFee(
@@ -1062,15 +1060,24 @@ export class BondingCurveService {
           proposalAuthority: authorityAddress,
           proposalToken0Account,
           proposalToken1Account,
-          cpSwapProgram: new PublicKey(CPMM_PROGRAM_ID),
-          ammConfig: new PublicKey(AMM_CONFIG_ID),
+          cpSwapProgram:
+            this.networkName == "devnet"
+              ? RAYDIUM_PROGRAM_IDS["devnet"].CPMM_PROGRAM_ID
+              : RAYDIUM_PROGRAM_IDS["_"].CPMM_PROGRAM_ID,
+          ammConfig:
+            this.networkName == "devnet"
+              ? RAYDIUM_PROGRAM_IDS["devnet"].AMM_CONFIG_ID
+              : RAYDIUM_PROGRAM_IDS["_"].AMM_CONFIG_ID,
           authority,
           poolState,
           lpMint,
           bondingCurveLpToken,
           token0Vault,
           token1Vault,
-          createPoolFee: new PublicKey(RAYDIUM_CREATE_POOL_FEE),
+          createPoolFee:
+            this.networkName == "devnet"
+              ? RAYDIUM_PROGRAM_IDS["devnet"].RAYDIUM_CREATE_POOL_FEE_RECIEVER
+              : RAYDIUM_PROGRAM_IDS["_"].RAYDIUM_CREATE_POOL_FEE_RECIEVER,
           observationState,
           tokenProgram: token0Program,
           token1Program,
@@ -1166,5 +1173,16 @@ export class BondingCurveService {
         token1Program: token0Program,
       };
     }
+  }
+
+  private async getSolanaClock(): Promise<Number> {
+    const clock = web3.SYSVAR_CLOCK_PUBKEY;
+    const clockInfo = await this.provider.connection.getAccountInfo(clock);
+    if (!clockInfo) {
+      throw new Error("Clock account not found");
+    }
+    const unixTimestamp = clockInfo.data.readBigUInt64LE(32);
+    const unixTime = Number(unixTimestamp);
+    return unixTime;
   }
 }

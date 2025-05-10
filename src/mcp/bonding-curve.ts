@@ -1,4 +1,4 @@
-import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
 import { useMcpContext, mcpError, mcpText } from "../utils/mcp-hooks";
 import { BondingCurveService } from "../services/bonding-curve-service";
@@ -7,10 +7,20 @@ import IDL from "../../idls/bonding_curve.json";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { CreateBondingCurveParams } from "../types";
+import { MultisigService } from "../services/multisig-service";
+import { Keypair } from "@solana/web3.js";
 
 async function getBondingCurveService() {
-  const context = await useMcpContext({ requireWallet: true });
-  if (!context.success) {
+  const context = await useMcpContext({
+    requireWallet: true,
+    requireConfig: true,
+  });
+  if (
+    !context.success ||
+    !context.config ||
+    !context.connection ||
+    !context.keypair
+  ) {
     return {
       success: false,
       error: context.error,
@@ -24,7 +34,8 @@ async function getBondingCurveService() {
       context.connection,
       wallet,
       "confirmed",
-      IDL as anchor.Idl
+      IDL as anchor.Idl,
+      context.config.network.name
     );
     return { success: true, service, wallet };
   } catch (error) {
@@ -162,11 +173,33 @@ export const bondingCurveTools = [
   {
     name: "createBondingCurve",
     description:
-      "Create a new token on a linear bonding curve with a base raise target",
+      "Launch a new project token on a linear bonding curve, a base token is used to raise funds. The tool expects the user to be either an individual or a team of individuals launching a project token on Solana. The team should be able to create a Squads multisig and provide vault address as the vault and authority address. The tool will create a new token mint and initialize the bonding curve with the provided parameters. If its a team, it is expected that they must provide members and even the optional fields like founder name, twitter handle, etc. The tool will also provide a base64 encoded image data for the token logo. ",
     schema: {
-      name: z.string().describe("Token name"),
-      symbol: z.string().describe("Token symbol"),
-      description: z.string().describe("Token description"),
+      name: z
+        .string()
+        .describe("Name of the project, for which the token is created"),
+      symbol: z.string().describe("Symbol of the project token"),
+      members: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "The addresses of the team members, if the project founder is a team of individuals"
+        ),
+      isATeam: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Is the project founder a team of individuals?"),
+      threshold: z
+        .number()
+        .optional()
+        .default(1)
+        .describe(
+          "Only applicable if the project founder is a team of individuals. The number of members required to approve a transaction."
+        ),
+      description: z
+        .string()
+        .describe("Description of the project, up to 150 characters"),
       baseRaiseTarget: z
         .number()
         .describe(
@@ -174,30 +207,61 @@ export const bondingCurveTools = [
         ),
       baseMint: z.string().describe("Base token mint address (e.g. WSOL)"),
       image: z.string().describe("Base64 encoded image data"),
-      tokenDecimals: z.number().default(6).describe("Token decimals"),
-      baseDecimals: z.number().describe("Base token decimals"),
-      tokenTotalSupply: z.number().describe("Total token supply"),
+      tokenDecimals: z
+        .number()
+        .default(6)
+        .describe("Token decimals for the new project token"),
+      baseDecimals: z
+        .number()
+        .describe("Base token decimals for the existing base token"),
+      tokenTotalSupply: z
+        .number()
+        .describe("Total token supply for the new project token"),
       twitterHandle: z
         .string()
         .optional()
-        .describe("Twitter handle (optional)"),
-      discordLink: z.string().optional().describe("Discord link (optional)"),
-      websiteUrl: z.string().optional().describe("Website URL (optional)"),
-      founderName: z.string().optional().describe("Founder name (optional)"),
+        .describe(
+          "Twitter handle of the project (optional). Required if the project founder is a team of individuals, formatted as @username"
+        ),
+      discordLink: z
+        .string()
+        .optional()
+        .describe(
+          "Discord link of the project (optional). Required if the project founder is a team of individuals"
+        ),
+      websiteUrl: z
+        .string()
+        .optional()
+        .describe(
+          "Website URL of the project (optional). Required if the project founder is a team of individuals"
+        ),
+      founderName: z
+        .string()
+        .optional()
+        .describe(
+          "Founder name of the project (optional). Required if the project founder is a team of individuals, can be a team name as well"
+        ),
       founderTwitter: z
         .string()
         .optional()
-        .describe("Founder Twitter handle (optional)"),
+        .describe(
+          "Founder Twitter handle (optional). Required if the project founder is a team of individuals, formatted as @username"
+        ),
       bullishThesis: z
         .string()
         .optional()
-        .describe("Bullish thesis for token (optional)"),
+        .describe(
+          "Why someone should invest in this project? (optional). Required if the project founder is a team of individuals, be descriptive and provide a clear thesis"
+        ),
     },
     async func(args: any) {
-      const {
+      let {
         name,
         symbol,
         description,
+        members,
+        isATeam,
+        threshold,
         baseRaiseTarget,
         baseMint,
         image,
@@ -232,6 +296,73 @@ export const bondingCurveTools = [
         }
       }
 
+      let authorityAddressFromMultisig = undefined;
+
+      if ((isATeam && !members) || !members.length || threshold < 1) {
+        return mcpError(
+          "Members are required if the project founder is a team of individuals",
+          "Provide the addresses of the team members, and ensure the threshold is at least 1"
+        );
+      }
+      if (isATeam && members.length < 2) {
+        return mcpError(
+          "At least two members are required if the project founder is a team of individuals",
+          "Provide the addresses of the team members"
+        );
+      }
+      let responseForLLM = ``;
+      if (isATeam) {
+        try {
+          const context = await useMcpContext({});
+          if (!context.success || !context.connection) {
+            return mcpError(
+              context.error!,
+              "Failed to get context for multisig creation"
+            );
+          }
+          founderName = founderName ?? members[0];
+          responseForLLM = `The project founder is a team of individuals. The members are: ${members.join(
+            ", "
+          )}. The threshold is ${threshold}.`;
+          const memberList = members.map(
+            (member: string) => new PublicKey(member)
+          );
+          const multisigResponse = await MultisigService.createMultisig(
+            context.connection,
+            wallet.payer,
+            threshold,
+            memberList,
+            `${name} Multisig`,
+            Keypair.generate()
+          );
+          if (!multisigResponse.success || !multisigResponse.data) {
+            return mcpError(
+              `Failed to create multisig: ${multisigResponse.error?.message}`,
+              "Check your input parameters and try again"
+            );
+          }
+
+          const multisigAddress = multisigResponse.data.multisigPda;
+          authorityAddressFromMultisig =
+            MultisigService.getMultisigVaultPda(multisigAddress).data;
+
+          // Should probably save the multisig address to config
+          // let's see if we need it later
+
+          responseForLLM += `\n Squads Multisig Creation response:  ${JSON.stringify(
+            multisigResponse.data,
+            null,
+            0
+          )}`;
+        } catch (err) {
+          return mcpError(
+            `Failed to create multisig: ${err}`,
+            "Check your input parameters and try again"
+          );
+        }
+      }
+
+      // create the bonding curve params
       const createParams: CreateBondingCurveParams = {
         baseMint: new PublicKey(baseMint),
         name,
@@ -239,8 +370,8 @@ export const bondingCurveTools = [
         buff: imageBuffer,
         baseRaiseTarget: new BN(baseRaiseTarget),
         description,
-        treasuryAddress: wallet.publicKey,
-        authorityAddress: wallet.publicKey,
+        treasuryAddress: authorityAddressFromMultisig ?? wallet.publicKey,
+        authorityAddress: authorityAddressFromMultisig ?? wallet.publicKey,
         tokenDecimals,
         baseDecimals,
         tokenTotalSupply: new BN(tokenTotalSupply),
@@ -263,7 +394,8 @@ export const bondingCurveTools = [
       }
 
       return mcpText(
-        `✅ Successfully created token with bonding curve!\n\nToken: ${name} (${symbol})\nMint Address: ${createResult.data.tokenMintAddress}\nTransaction: ${createResult.data.tx}`
+        responseForLLM +
+          `\n ✅ Successfully created token with bonding curve!\n\nToken: ${name} (${symbol})\nMint Address: ${createResult.data.tokenMintAddress}\nTransaction: ${createResult.data.tx}`
       );
     },
   },
@@ -500,14 +632,21 @@ export const bondingCurveTools = [
       const mint = new PublicKey(mintAddress);
 
       try {
+        const curveResult = await service.getBondingCurve(mint);
+        if (!curveResult.success) {
+          return mcpError(
+            `Failed to get bonding curve data: ${curveResult.error?.message}`,
+            "Check the mint address and try again"
+          );
+        }
         // Get token name for display
         const proposalResult = await service.getProposal(mint);
         const tokenName = proposalResult.success
           ? proposalResult.data?.name
           : mintAddress;
         if (isBuy) {
-          // Convert SOL amount to lamports
-          const amountBN = new BN(amount * LAMPORTS_PER_SOL);
+          // Convert base amount to smallest unit
+          const amountBN = new BN(amount * curveResult.data?.baseDecimals!);
 
           // Simulate buy
           const simulationResult = await service.simulateBuy(
@@ -526,16 +665,17 @@ export const bondingCurveTools = [
           // Format the results for display
           const sim = simulationResult.data!;
           const tokenDecimalsFactor = Math.pow(10, sim.tokenDecimals);
+          const baseDecimalsFactor = Math.pow(10, sim.baseDecimals);
           const expectedTokenAmount = sim.tokenAmount
             .div(new BN(tokenDecimalsFactor))
             .toNumber();
           const minTokenAmount = sim.minTokenAmount
             .div(new BN(tokenDecimalsFactor))
             .toNumber();
-          const feeInSol = sim.feeAmount
-            .div(new BN(LAMPORTS_PER_SOL))
+          const feeInBase = sim.feeAmount
+            .div(new BN(baseDecimalsFactor))
             .toNumber();
-          const netSolCost = amount - feeInSol;
+          const netBaseCostRequired = amount - feeInBase;
 
           // Format completion status
           const completionStatus = sim.willComplete
@@ -544,15 +684,15 @@ export const bondingCurveTools = [
 
           return mcpText(`🔮 Buy Simulation for ${tokenName}
 
-💰 Input: ${amount} SOL
+💰 Input: ${amount} 
 🪙 Expected output: ${expectedTokenAmount.toFixed(6)} tokens
 🪙 Minimum output (with ${slippagePercent}% slippage): ${minTokenAmount.toFixed(
             6
           )} tokens
-💸 Fee: ${feeInSol.toFixed(6)} SOL
-💸 Net cost: ${netSolCost.toFixed(6)} SOL
+💸 Fee: ${feeInBase.toFixed(6)} 
+💸 Net cost: ${netBaseCostRequired.toFixed(6)} 
 📊 Price impact: ${sim.priceImpact.toFixed(2)}%
-💱 Price per token: ${sim.pricePerToken.toFixed(6)} SOL
+💱 Price per token: ${sim.pricePerToken.toFixed(6)} 
 ${completionStatus}
 
 To execute this swap, use the \`swap\` tool with:
@@ -589,28 +729,28 @@ To execute this swap, use the \`swap\` tool with:
 
           // Format the results for display
           const sim = simulationResult.data!;
-          const expectedSolAmount = sim.baseAmount
+          const expectedBaseAmount = sim.baseAmount
             .div(new BN(10 ** sim.baseDecimals))
             .toNumber();
-          const minSolAmount = sim.minBaseAmount
+          const minBaseAmount = sim.minBaseAmount
             .div(new BN(10 ** sim.baseDecimals))
             .toNumber();
-          const feeInSol = sim.feeAmount
-            .div(new BN(LAMPORTS_PER_SOL))
+          const feeInBase = sim.feeAmount
+            .div(new BN(10 ** sim.baseDecimals))
             .toNumber();
-          const netSolReceived = expectedSolAmount; // Already net of fee
+          const netBaseRecieved = expectedBaseAmount; // Already net of fee
 
           return mcpText(`🔮 Sell Simulation for ${tokenName}
 
 🪙 Input: ${amount} tokens
-💰 Expected output: ${expectedSolAmount.toFixed(6)} SOL
-💰 Minimum output (with ${slippagePercent}% slippage): ${minSolAmount.toFixed(
+💰 Expected output: ${expectedBaseAmount.toFixed(6)} 
+💰 Minimum output (with ${slippagePercent}% slippage): ${minBaseAmount.toFixed(
             6
-          )} SOL
-💸 Fee: ${feeInSol.toFixed(6)} SOL
-💸 Net received: ${netSolReceived.toFixed(6)} SOL
+          )} 
+💸 Fee: ${feeInBase.toFixed(6)} 
+💸 Net received: ${netBaseRecieved.toFixed(6)} 
 📊 Price impact: ${sim.priceImpact.toFixed(2)}%
-💱 Price per token: ${sim.pricePerToken.toFixed(6)} SOL
+💱 Price per token: ${sim.pricePerToken.toFixed(6)} 
 
 To execute this swap, use the \`swap\` tool with:
   --mintAddress "${mintAddress}" --isBuy false --amount ${amount} --slippagePercent ${slippagePercent}`);
@@ -626,7 +766,7 @@ To execute this swap, use the \`swap\` tool with:
   {
     name: "getMaxBuy",
     description:
-      "Calculate the maximum amount of SOL you can use to buy tokens",
+      "Calculates the maximum amount of base tokens you can use to buy tokens, such that the bonding curve is complete. This is useful for estimating the maximum amount of base tokens you can invest in a project token.",
     schema: {
       mintAddress: z.string().describe("Address of token mint"),
     },
@@ -716,7 +856,7 @@ Note: This is an estimate and actual values may vary slightly due to market cond
   {
     name: "migrateToRaydium",
     description:
-      "Migrate from bonding curve to Raydium pool and claim LP tokens",
+      "This tool migrates the bonding curve to Raydium, claims the LP tokens to creator's wallet. Asset transfers are done to the authority address from the bonding curve. The state remains on-chain, and the token is migrated to a Raydium pool.",
     schema: {
       mintAddress: z.string().describe("Address of token mint"),
     },
@@ -767,7 +907,7 @@ Note: This is an estimate and actual values may vary slightly due to market cond
         }
 
         return mcpText(
-          `✅ Successfully migrated ${tokenName} to Raydium and claimed LP tokens!\n\nTransaction: ${migrationResult.data}`
+          `✅ Successfully migrated ${tokenName} to Raydium and claimed LP tokens!\n\nTransaction: ${migrationResult.data}. The LP tokens have been sent to your wallet, and the bonding curve has been closed. The state remains on-chain, and the token is now a Raydium pool. The assets have also been transferred to the authority address from the bonding curve`
         );
       } catch (error: any) {
         return mcpError(

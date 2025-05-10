@@ -1,12 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { registerDaoTools } from "./mcp/dao";
+// import { registerDaoTools } from "./mcp/dao";
 import { registerConfigAndWalletTools } from "./mcp/config-and-wallet";
-import { registerProposalTools } from "./mcp/proposal";
+// import { registerProposalTools } from "./mcp/proposal";
 import { ConnectionService } from "./services/connection-service";
 import { registerResource } from "./mcp/resource";
-import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 
 import { registerTestTokenTools } from "./mcp/test-token";
 import { registerMultisigTools } from "./mcp/multisig";
@@ -17,6 +16,7 @@ const server = new McpServer({
   version: "0.0.1",
 });
 registerConfigAndWalletTools(server);
+registerMultisigTools(server);
 registerTestTokenTools(server);
 registerBondingCurveTools(server);
 

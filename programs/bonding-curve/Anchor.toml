@@ -24,26 +24,53 @@ startup_wait = 5000
 shutdown_wait = 2000
 upgradeable = false
 
+# [test.validator]
+# bind_address = "0.0.0.0"
+# url = "https://api.mainnet-beta.solana.com"
+# ledger = ".anchor/test-ledger"
+# rpc_port = 8899
+
+# [[test.validator.clone]]
+# address = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
+
+# [[test.validator.clone]]
+# address = "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8"
+
+# [[test.validator.clone]]
+# address = "D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2"
+
+# [[test.validator.clone]]
+# address = "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE"
+
+# [[test.validator.clone]]
+# address = "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+
+# [[test.validator.clone]]
+# address = "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
+
 [test.validator]
-bind_address = "0.0.0.0"
-url = "https://api.mainnet-beta.solana.com"
+url = "https://api.devnet.solana.com"
 ledger = ".anchor/test-ledger"
 rpc_port = 8899
+bind_address = "0.0.0.0"
 
 [[test.validator.clone]]
-address = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
+address = "CPMDWBwJDtYax9qW7AyRuVC19Cc4L4Vcy4n2BHAbHkCW"
 
 [[test.validator.clone]]
-address = "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8"
+address = "9zSzfkYy6awexsHvmggeH36pfVUdDGyCcwmjT3AQPBj6"
 
 [[test.validator.clone]]
-address = "D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2"
+address = "DLockwT7X7sxtLmGH9g5kmfcjaBtncdbUmi738m5bvQC"
 
 [[test.validator.clone]]
-address = "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE"
+address ="7AFUeLVRjBfzqK3tTGw8hN48KLQWSk6DTE8xprWdPqix"
 
 [[test.validator.clone]]
-address = "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+address = "G11FKBRaAkHAKuLCgLM6K6NUc9rTjPAznRCjZifrTQe2"
+
+
+# These program addresses are valid for both devnet and localnet
 
 [[test.validator.clone]]
 address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
@@ -51,5 +78,3 @@ address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 [[test.validator.clone]]
 address = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 
-[[test.validator.clone]]
-address = "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"

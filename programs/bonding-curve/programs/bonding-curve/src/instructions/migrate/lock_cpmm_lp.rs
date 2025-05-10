@@ -11,9 +11,6 @@ use raydium_cpmm_cpi::{
 };
 
 use raydium_locking_cpi::{ cpi, program::RaydiumLiquidityLocking, states::LOCKED_LIQUIDITY_SEED };
-
-use crate::constants::LOCK_CPMM_AUTHORITY;
-
 #[derive(Accounts)]
 pub struct LockCpmmLiquidity<'info> {
     pub cp_swap_program: Program<'info, RaydiumCpmm>,
@@ -23,7 +20,7 @@ pub struct LockCpmmLiquidity<'info> {
     pub user: Signer<'info>,
     pub amm_config: Account<'info, AmmConfig>,
     /// CHECK: the authority of token vault that cp is locked
-    #[account(address = LOCK_CPMM_AUTHORITY)]
+    #[account(mut)]
     pub authority: UncheckedAccount<'info>,
     #[account(mut)]
     pub fee_nft_mint: Signer<'info>,

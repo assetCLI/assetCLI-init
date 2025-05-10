@@ -1,4 +1,4 @@
-use anchor_lang::prelude::*;
+use anchor_lang::{ prelude::*, solana_program::{ program::invoke, system_instruction } };
 use anchor_spl::{
     associated_token::AssociatedToken,
     metadata::{
@@ -14,9 +14,10 @@ use crate::{
     errors::ContractError,
     BondingCurve,
     CreateBondingCurveParams,
+    DAOProposal,
     Global,
     ProgramStatus,
-    DAOProposal, // New import
+    DEFAULT_DECIMALS,
 };
 
 #[derive(Accounts)]
@@ -25,9 +26,8 @@ pub struct CreateBondingCurve<'info> {
     #[account(
         init,
         payer = creator,
-        mint::decimals = global.mint_decimals,
-        mint::authority = dao_proposal, // Change authority to dao_proposal
-        mint::freeze_authority = dao_proposal, // Keep freeze authority with bonding curve for now,
+        mint::decimals = params.decimals.unwrap_or(DEFAULT_DECIMALS),
+        mint::authority = bonding_curve,
         seeds = [
             BondingCurve::TOKEN_PREFIX.as_bytes(),
             params.name.as_bytes(),
@@ -50,6 +50,13 @@ pub struct CreateBondingCurve<'info> {
     pub bonding_curve: Box<Account<'info, BondingCurve>>,
 
     #[account(
+        mut,
+        seeds = [BondingCurve::VAULT_PREFIX.as_bytes(), mint.to_account_info().key().as_ref()],
+        bump,
+    )]
+    pub bonding_curve_vault: SystemAccount<'info>,
+
+    #[account(
         init,
         payer = creator,
         seeds = [DAOProposal::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
@@ -62,7 +69,7 @@ pub struct CreateBondingCurve<'info> {
         init_if_needed,
         payer = creator,
         associated_token::mint = mint,
-        associated_token::authority = bonding_curve
+        associated_token::authority = bonding_curve_vault
     )]
     bonding_curve_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -86,7 +93,6 @@ pub struct CreateBondingCurve<'info> {
 }
 
 impl<'info> CreateBondingCurve<'info> {
-
     pub fn process(
         &mut self,
         params: CreateBondingCurveParams,
@@ -101,23 +107,22 @@ impl<'info> CreateBondingCurve<'info> {
         self.bonding_curve.update_from_params(
             self.mint.key(),
             *self.creator.key,
-            &self.global,
             &params,
             &clock,
-            bumps.bonding_curve
+            bumps.bonding_curve,
+            bumps.bonding_curve_vault
         );
 
         // Initialize metadata and mint tokens
         self.initialize_meta(&params)?;
 
-        // Use dao_proposal as the mint authority
-        let mint_authority_seeds = self.dao_proposal.get_signer_seeds();
+        let mint_authority_seeds = self.bonding_curve.get_signer_seeds();
         let mint_auth_signer_seeds: &[&[&[u8]]] = &[&mint_authority_seeds];
         mint_to(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
                 MintTo {
-                    authority: self.dao_proposal.to_account_info(),
+                    authority: self.bonding_curve.to_account_info(),
                     to: self.bonding_curve_token_account.to_account_info(),
                     mint: self.mint.to_account_info(),
                 },
@@ -125,6 +130,8 @@ impl<'info> CreateBondingCurve<'info> {
             ),
             self.bonding_curve.token_total_supply
         )?;
+        msg!("Giving some SOL to vault...");
+        self.init_bonding_curve_vault()?;
         Ok(())
     }
 
@@ -142,10 +149,12 @@ impl<'info> CreateBondingCurve<'info> {
             description: params.dao_description.clone(),
             realm_address: params.realm_address.clone(),
             twitter_handle: params.twitter_handle.clone(),
+            treasury_address: params.treasury_address.clone(),
             discord_link: params.discord_link.clone(),
             website_url: params.website_url.clone(),
             logo_uri: params.logo_uri.clone(),
             founder_name: params.founder_name.clone(),
+            governance_address: params.governance_address.clone(),
             founder_twitter: params.founder_twitter.clone(),
             bullish_thesis: params.bullish_thesis.clone(),
             bump: dao_proposal_bump,
@@ -156,16 +165,9 @@ impl<'info> CreateBondingCurve<'info> {
     fn initialize_meta(&mut self, params: &CreateBondingCurveParams) -> Result<()> {
         let mint_info = self.mint.to_account_info();
         let metadata_info = self.metadata.to_account_info();
-        let mint_key = mint_info.key;
-        // Use dao_proposal as the mint and update authority
-        let mint_authority_info = self.dao_proposal.to_account_info();
-
-        let dao_signer = [
-            DAOProposal::SEED_PREFIX.as_bytes(),
-            mint_key.as_ref(),
-            &[self.dao_proposal.bump],
-        ];
-        let dao_auth_signer_seeds = &[&dao_signer[..]];
+        let mint_authority_info = self.bonding_curve.to_account_info();
+        let mint_auth_signer_seeds = self.bonding_curve.get_signer_seeds();
+        let mint_auth_signer = &[&mint_auth_signer_seeds[..]];
 
         let token_data: DataV2 = DataV2 {
             name: params.name.clone(),
@@ -188,11 +190,29 @@ impl<'info> CreateBondingCurve<'info> {
                 system_program: self.system_program.to_account_info(),
                 rent: self.rent.to_account_info(),
             },
-            dao_auth_signer_seeds
+            mint_auth_signer
         );
 
         create_metadata_accounts_v3(metadata_ctx, token_data, false, true, None)?;
-        msg!("CreateBondingCurve::intialize_meta: done");
+        Ok(())
+    }
+
+    fn init_bonding_curve_vault(&self) -> Result<()> {
+        let rent_exempt = Rent::get()?.minimum_balance(0);
+        let transfer_ix = system_instruction::transfer(
+            self.creator.to_account_info().key,
+            self.bonding_curve_vault.to_account_info().key,
+            rent_exempt
+        );
+        msg!("Transferring funds to bonding curve vault...");
+        invoke(
+            &transfer_ix,
+            &[
+                self.creator.to_account_info(),
+                self.bonding_curve_vault.to_account_info(),
+                self.system_program.to_account_info(),
+            ]
+        )?;
         Ok(())
     }
 }

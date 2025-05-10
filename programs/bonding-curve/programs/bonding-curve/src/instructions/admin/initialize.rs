@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::{ errors::ContractError, state::{ Global, GlobalSettingsInput } };
+use crate::{ errors::ContractError, state::{ Global, GlobalSettingsInput }, DEFAULT_MIGRATION_FEE };
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
@@ -20,11 +20,14 @@ pub struct Initialize<'info> {
 
 impl<'info> Initialize<'info> {
     pub fn process(&mut self, params: GlobalSettingsInput, bumps: &InitializeBumps) -> Result<()> {
-        self.global.update_settings(params);
-        self.global.global_authority = *self.admin.key;
-        self.global.initialized = true;
-        self.global.bump = bumps.global;
-        require_gt!(self.global.mint_decimals, 0, ContractError::InvalidArgument);
+        self.global.set_inner(Global {
+            status: params.status.unwrap_or(crate::ProgramStatus::Running),
+            initialized: true,
+            global_authority: self.admin.key(),
+            migrate_fee_amount: params.migrate_fee_amount.unwrap_or(DEFAULT_MIGRATION_FEE),
+            fee_receiver: self.admin.key(),
+            bump: bumps.global,
+        });
         Ok(())
     }
 }

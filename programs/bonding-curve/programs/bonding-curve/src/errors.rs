@@ -98,4 +98,7 @@ pub enum ContractError {
 
     #[msg("Invalid realm account")]
     InvalidRealmAccount,
+
+    #[msg("Invalid treasury address")]
+    InvalidTreasury,
 }

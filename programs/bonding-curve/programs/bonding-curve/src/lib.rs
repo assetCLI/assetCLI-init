@@ -4,11 +4,13 @@ declare_id!("C2LfjaKea6KJ15zXDzxghTSErN6xEqUnHzpg2Vrpdjnu");
 mod instructions;
 mod state;
 mod errors;
-mod events; // Add the events module
+mod events;
+mod constants;
 
 pub use instructions::*;
 pub use state::*;
-pub use events::*; // Export the events
+pub use events::*;
+pub use constants::*;
 
 #[program]
 pub mod bonding_curve {
@@ -29,5 +31,7 @@ pub mod bonding_curve {
         ctx.accounts.process(params)
     }
 
-    // Migration functionality will be added later
+    pub fn create_raydium_pool(ctx: Context<CreateRaydiumPool>) -> Result<()> {
+        ctx.accounts.process()
+    }
 }

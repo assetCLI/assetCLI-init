@@ -29,5 +29,30 @@ url = "https://api.mainnet-beta.solana.com"
 ledger = ".anchor/test-ledger"
 rpc_port = 8899
 
+# cp-swap program in mainnet
+[[test.validator.clone]]
+address = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
+
+# cp-swap create_pool_fee_reveiver in mainnet
+[[test.validator.clone]]
+address = "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8"
+
+# cp-swap ammConfig in mainnet
+[[test.validator.clone]]
+address = "D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2"
+
+# raydium-locking program in mainnet
+[[test.validator.clone]]
+address = "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE"
+
+# raydium-locking authority in mainnet
+[[test.validator.clone]]
+address = "3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH"
+
+# metadata program in mainnet
 [[test.validator.clone]]
 address = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+
+# raydium-locking authority in mainnet
+[[test.validator.clone]]
+address = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"

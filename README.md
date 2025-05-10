@@ -12,6 +12,8 @@ running your entire governance, multisig and funding lifecycle (including bondin
 
 ![assetCLI](./docs/images/banner.png)
 
+### We have no token on Pump.fun, daos.fun or any other platform.
+
 ## 🌟 Features
 
 - **DAO Creation**: Create standard DAOs or integrated DAOs with Squads multisig support

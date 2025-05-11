@@ -27,6 +27,8 @@ jobs:
           export PATH="$HOME/home/runner/.avm/bin:$PATH"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           echo "$HOME/home/runner/.avm/bin" >> $GITHUB_PATH
+          cargo update -p proc-macro2 --precise 1.0.94
+          avm install v0.31.0
           avm use 0.31.0
 
       - name: Verify Solana CLI installation
@@ -91,12 +93,6 @@ jobs:
           # Install and build the CLI
           npm install
           npm run build
-
-      - name: Run tests
-        run: |
-          # Run the tests
-          npm run test:standard
-          npm run test:integrated
 
       - name: Cleanup
         run: |

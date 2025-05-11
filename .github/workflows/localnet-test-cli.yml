@@ -27,6 +27,7 @@ jobs:
           export PATH="$HOME/home/runner/.avm/bin:$PATH"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
           echo "$HOME/home/runner/.avm/bin" >> $GITHUB_PATH
+          avm use 0.31.0
 
       - name: Verify Solana CLI installation
         run: |
@@ -40,7 +41,7 @@ jobs:
           solana-keygen new --no-bip39-passphrase -o /home/runner/.config/solana/id.json
 
           # Start a localnet with explicit bind address for IPv4
-          solana-test-validator --quiet --reset --clone-upgradeable-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s --clone BSTq9w3kZwNwpBXJEvTZz2G9ZTNyKBvoSeXMvwb4cNZr --url devnet --bind-address 127.0.0.1 --rpc-port 8899 &
+          solana-test-validator --quiet --reset --clone-upgradeable-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE --clone BSTq9w3kZwNwpBXJEvTZz2G9ZTNyKBvoSeXMvwb4cNZr DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8 D4FPEruKEHrG5TenZ2mpDGEfu1iUvTiqBxvpU8HLBvC2 3f7GcQFG397GAaEnv51zR6tsTVihYRydnydDD1cXekxH GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr --url mainnet-beta --bind-address 127.0.0.1 --rpc-port 8899 &
           VALIDATOR_PID=$!
 
           # Give the localnet time to boot up

@@ -179,6 +179,9 @@ export const bondingCurveTools = [
         .string()
         .describe("Name of the project, for which the token is created"),
       symbol: z.string().describe("Symbol of the project token"),
+      description: z
+      .string()
+      .describe("Description of the project, up to 150 characters"),
       members: z
         .array(z.string())
         .optional()
@@ -197,26 +200,23 @@ export const bondingCurveTools = [
         .describe(
           "Only applicable if the project founder is a team of individuals. The number of members required to approve a transaction."
         ),
-      description: z
-        .string()
-        .describe("Description of the project, up to 150 characters"),
       baseRaiseTarget: z
         .number()
         .describe(
           "Base raise target (in base token units, e.g. SOL, not lamports)"
         ),
       baseMint: z.string().describe("Base token mint address (e.g. WSOL)"),
-      image: z.string().describe("Base64 encoded image data"),
       tokenDecimals: z
-        .number()
-        .default(6)
-        .describe("Token decimals for the new project token"),
+      .number()
+      .default(6)
+      .describe("Token decimals for the new project token"),
       baseDecimals: z
-        .number()
-        .describe("Base token decimals for the existing base token"),
+      .number()
+      .describe("Base token decimals for the existing base token"),
       tokenTotalSupply: z
-        .number()
-        .describe("Total token supply for the new project token"),
+      .number()
+      .describe("Total token supply for the new project token"),
+      image: z.string().describe("Base64 encoded image data"),
       twitterHandle: z
         .string()
         .optional()

@@ -1,3 +1,5 @@
+// Deprecated: This tool is no longer used and will be removed in the future.
+
 // import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // import { z } from "zod";
 // import { ConfigService } from "../services/config-service";

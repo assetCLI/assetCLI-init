@@ -1,3 +1,5 @@
+// Deprecated: This file is no longer used. This tool has been removed from the CLI.
+
 // import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 // import { z } from "zod";
 // import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";

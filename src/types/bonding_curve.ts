@@ -1185,7 +1185,7 @@ export type BondingCurve = {
         },
         {
           "name": "cpSwapProgram",
-          "address": "CPMDWBwJDtYax9qW7AyRuVC19Cc4L4Vcy4n2BHAbHkCW"
+          "address": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
         },
         {
           "name": "ammConfig"
@@ -1376,7 +1376,7 @@ export type BondingCurve = {
         {
           "name": "createPoolFee",
           "writable": true,
-          "address": "G11FKBRaAkHAKuLCgLM6K6NUc9rTjPAznRCjZifrTQe2"
+          "address": "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8"
         },
         {
           "name": "observationState",
@@ -1446,11 +1446,11 @@ export type BondingCurve = {
       "accounts": [
         {
           "name": "lockCpmmProgram",
-          "address": "DLockwT7X7sxtLmGH9g5kmfcjaBtncdbUmi738m5bvQC"
+          "address": "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE"
         },
         {
           "name": "cpSwapProgram",
-          "address": "CPMDWBwJDtYax9qW7AyRuVC19Cc4L4Vcy4n2BHAbHkCW"
+          "address": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
         },
         {
           "name": "creator",
@@ -2104,11 +2104,11 @@ export type BondingCurve = {
       "accounts": [
         {
           "name": "cpSwapProgram",
-          "address": "CPMDWBwJDtYax9qW7AyRuVC19Cc4L4Vcy4n2BHAbHkCW"
+          "address": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
         },
         {
           "name": "lockCpmmProgram",
-          "address": "DLockwT7X7sxtLmGH9g5kmfcjaBtncdbUmi738m5bvQC"
+          "address": "LockrWmn6K5twhz3y9w1dQERbmgSaRkfnTeTKbpofwE"
         },
         {
           "name": "user",
@@ -2448,7 +2448,7 @@ export type BondingCurve = {
       "accounts": [
         {
           "name": "cpSwapProgram",
-          "address": "CPMDWBwJDtYax9qW7AyRuVC19Cc4L4Vcy4n2BHAbHkCW"
+          "address": "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C"
         },
         {
           "name": "user",

@@ -1013,7 +1013,7 @@ export class BondingCurveService {
       );
       const creatorLpTokenAccount = this.getAssociatedTokenAddress(
         lpMint,
-        creator
+        authorityAddress
       );
 
       // Get ordered accounts - key change

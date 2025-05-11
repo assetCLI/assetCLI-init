@@ -4,7 +4,11 @@ import { ConfigService } from "../services/config-service";
 import { PublicKey, LAMPORTS_PER_SOL, Keypair } from "@solana/web3.js";
 import { MultisigService } from "../services/multisig-service";
 import { useMcpContext } from "../utils/mcp-hooks";
-import { getMint } from "@solana/spl-token";
+import {
+  getMint,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
 
 // Standalone Squads Multisig Tool
 export function registerMultisigTools(server: McpServer) {
@@ -387,15 +391,29 @@ export function registerMultisigTools(server: McpServer) {
           };
         }
 
-        // Get balance
-        const vaultBalance = await connection.getBalance(vaultPdaRes.data);
-
+        // Get assets held by the multisig
+        const solBalance = await connection.getBalance(vaultPdaRes.data);
+        const [classicTokens, t22Tokens] = await Promise.all([
+          context.connection.getParsedTokenAccountsByOwner(vaultPdaRes.data, {
+            programId: TOKEN_PROGRAM_ID,
+          }),
+          context.connection.getParsedTokenAccountsByOwner(vaultPdaRes.data, {
+            programId: TOKEN_2022_PROGRAM_ID,
+          }),
+        ]);
+        const allTokens = [...classicTokens.value, ...t22Tokens.value];
         // Format the response
         const info = multisigInfoRes.data;
         const result = {
           address: multisigAddress!.toBase58(),
           vault: vaultPdaRes.data.toBase58(),
-          vaultBalance: `${vaultBalance / LAMPORTS_PER_SOL} SOL`,
+          solBalance: `${solBalance / LAMPORTS_PER_SOL} SOL`,
+          tokens: allTokens.map((token) => ({
+            pubkey: token.pubkey.toBase58(),
+            mint: token.account.data.parsed.info.mint,
+            programId: token.account.owner.toBase58(),
+            amount: token.account.data.parsed.info.tokenAmount,
+          })),
           members: (info.members || []).map((m) => m.toBase58()),
           memberCount: info.memberCount,
           threshold: info.threshold,
@@ -617,8 +635,9 @@ export function registerMultisigTools(server: McpServer) {
                 (statusRes.data?.meetsThreshold
                   ? `Ready to execute! Use 'executeMultisigTransaction' with index ${transactionIndex}`
                   : `Waiting for more approvals. ${
-                        (statusRes.data?.threshold ?? 0) - (statusRes.data?.approvalCount ?? 0)
-                      } more needed.`),
+                      (statusRes.data?.threshold ?? 0) -
+                      (statusRes.data?.approvalCount ?? 0)
+                    } more needed.`),
             },
           ],
         };

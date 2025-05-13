@@ -14,31 +14,31 @@ async lockLpTokens(
     const baseMint = new PublicKey(curveResult.data.baseMint);
     const poolState = this.findPoolStatePda(mint, baseMint);
     const lpMint = this.findLpMintPda(poolState);
-    
+
     // Get ordered mints
     const [token0Mint, token1Mint] = this.getOrderedMints(baseMint, mint);
-    
+
     // Get ordered vaults
     const token0Vault = this.findTokenVaultPda(poolState, token0Mint);
     const token1Vault = this.findTokenVaultPda(poolState, token1Mint);
-    
+
     // User's LP token account
     const userLpTokenAccount = this.getAssociatedTokenAddress(lpMint, user);
-    
+
     // NFT related accounts
     const feeNftAccount = this.getAssociatedTokenAddress(feeNftMint.publicKey, user);
     const lockedLpVault = this.getAssociatedTokenAddress(
-      lpMint, 
+      lpMint,
       new PublicKey(LOCK_CPMM_AUTHORITY_ID)
     );
-    
+
     const lockedLiquidity = PublicKey.findProgramAddressSync(
       [Buffer.from("locked_liquidity"), feeNftMint.publicKey.toBuffer()],
       new PublicKey(LOCK_CPMM_PROGRAM_ID)
     )[0];
-    
+
     const feeNftMetadataAddress = this.findMetadataPda(feeNftMint.publicKey);
-    
+
     const modifyComputeUnits = web3.ComputeBudgetProgram.setComputeUnitLimit({
       units: 1_000_000,
     });
@@ -72,7 +72,7 @@ async lockLpTokens(
       .preInstructions([modifyComputeUnits])
       .signers([feeNftMint])
       .rpc();
-    
+
     return { success: true, data: ix };
   } catch (error: any) {
     return {
@@ -99,19 +99,19 @@ async harvestLockedLiquidity(
         error: { message: "Failed to get bonding curve data", details: null },
       };
     }
-    
+
     const baseMint = new PublicKey(curveResult.data.baseMint);
     const poolState = this.findPoolStatePda(mint, baseMint);
     const lpMint = this.findLpMintPda(poolState);
     const authority = this.findCpmmAuthorityPda();
-    
+
     // Get ordered mints
     const [token0Mint, token1Mint] = this.getOrderedMints(baseMint, mint);
-    
+
     // Get token vaults
     const token0Vault = this.findTokenVaultPda(poolState, token0Mint);
     const token1Vault = this.findTokenVaultPda(poolState, token1Mint);
-    
+
     // Correctly determine which vault is for which token
     let tokenVault, baseVault, token0Program, token1Program;
     if (baseMint.equals(token0Mint)) {
@@ -125,20 +125,20 @@ async harvestLockedLiquidity(
       token0Program = TOKEN_PROGRAM_ID; // Or TOKEN_2022_PROGRAM_ID if needed
       token1Program = TOKEN_PROGRAM_ID;
     }
-    
+
     // User token accounts
     const userTokenAccount = this.getAssociatedTokenAddress(mint, creator);
     const userBaseTokenAccount = this.getAssociatedTokenAddress(baseMint, creator);
     const creatorNftMintAccount = this.getAssociatedTokenAddress(feeNftMint, creator);
-    
+
     // Locked liquidity PDA
     const lockedLiquidity = PublicKey.findProgramAddressSync(
       [Buffer.from("locked_liquidity"), feeNftMint.toBuffer()],
       new PublicKey(LOCK_CPMM_PROGRAM_ID)
     )[0];
-    
+
     const lockedLpVault = this.getAssociatedTokenAddress(
-      lpMint, 
+      lpMint,
       new PublicKey(LOCK_CPMM_AUTHORITY_ID)
     );
 
@@ -168,7 +168,7 @@ async harvestLockedLiquidity(
         token1Program,
       })
       .rpc();
-    
+
     return { success: true, data: tx };
   } catch (error: any) {
     return {
@@ -183,7 +183,7 @@ async harvestLockedLiquidity(
 
 ```typescript
 async raydiumSwap(
-  mint: PublicKey, 
+  mint: PublicKey,
   amountIn: BN,
   slippage: BN = new BN(500)
 ): Promise<ServiceResponse<string>> {
@@ -196,27 +196,27 @@ async raydiumSwap(
         error: { message: "Failed to get bonding curve data", details: null },
       };
     }
-    
+
     const baseMint = new PublicKey(curveResult.data.baseMint);
     const poolState = this.findPoolStatePda(mint, baseMint);
     const authority = this.findCpmmAuthorityPda();
     const observationState = this.findObservationStatePda(poolState);
-    
+
     // User token accounts
     const userTokenAccount = this.getAssociatedTokenAddress(mint, user);
     const userBaseTokenAccount = this.getAssociatedTokenAddress(baseMint, user);
-    
+
     // We're assuming the input is base and output is token
     const inputTokenAccount = userBaseTokenAccount;
     const outputTokenAccount = userTokenAccount;
     const inputTokenMint = baseMint;
     const outputTokenMint = mint;
-    
+
     // Get ordered vaults
     const [token0Mint, token1Mint] = this.getOrderedMints(baseMint, mint);
     const token0Vault = this.findTokenVaultPda(poolState, token0Mint);
     const token1Vault = this.findTokenVaultPda(poolState, token1Mint);
-    
+
     // Determine input and output vaults based on which mint is which
     let inputVault, outputVault, inputTokenProgram, outputTokenProgram;
     if (inputTokenMint.equals(token0Mint)) {
@@ -230,7 +230,7 @@ async raydiumSwap(
       inputTokenProgram = TOKEN_PROGRAM_ID;
       outputTokenProgram = TOKEN_PROGRAM_ID; // Or TOKEN_2022_PROGRAM_ID if needed
     }
-    
+
     const tx = new web3.Transaction();
     const swapIx = await this.program.methods
       .raydiumSwap(amountIn, slippage)
@@ -251,10 +251,10 @@ async raydiumSwap(
         observationState,
       })
       .instruction();
-    
+
     tx.add(swapIx);
     const signature = await this.provider.sendAndConfirm(tx);
-    
+
     return { success: true, data: signature };
   } catch (error: any) {
     return {
@@ -267,15 +267,15 @@ async raydiumSwap(
 
 ## Key Changes Made:
 
-1. **For all methods**: 
+1. **For all methods**:
    - Used `getOrderedMints` to get deterministic ordering of mints
    - Used proper PDAs for vaults based on this mint ordering
 
-2. **For harvest method**: 
+2. **For harvest method**:
    - Added logic to correctly map token0/token1 to base/token
    - Set appropriate token programs based on mint ordering
 
-3. **For swap method**: 
+3. **For swap method**:
    - Added logic to determine which vault is input and which is output
    - Assigned appropriate token programs based on order
 

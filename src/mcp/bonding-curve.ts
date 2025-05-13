@@ -9,6 +9,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { CreateBondingCurveParams } from "../types";
 import { MultisigService } from "../services/multisig-service";
 import { Keypair } from "@solana/web3.js";
+import {
+  formatTokenAmount,
+  formatTokenSymbol,
+  getTokenInfo,
+} from "../utils/token-utils";
+import { ConfigService } from "../services/config-service";
 
 async function getBondingCurveService() {
   const context = await useMcpContext({
@@ -29,15 +35,31 @@ async function getBondingCurveService() {
   }
   try {
     // Create bonding curve service
+    const connection = context.connection;
     const wallet = new anchor.Wallet(context.keypair);
+    let name = undefined;
+    try {
+      name = context.config.network.name;
+      if (!name) {
+        throw new Error("Network name is not defined");
+      }
+    } catch (e) {
+      return {
+        success: false,
+        error:
+          "Failed to get network name, bc access bhi nhi kr skte is name ko",
+        suggestion: "Check your network configuration",
+      };
+    }
+    const networkName = name || "devnet";
     const service = new BondingCurveService(
       context.connection,
       wallet,
       "confirmed",
       IDL as anchor.Idl,
-      context.config.network.name
+      networkName
     );
-    return { success: true, service, wallet };
+    return { success: true, service, wallet, connection };
   } catch (error) {
     return {
       success: false,
@@ -170,6 +192,7 @@ export const bondingCurveTools = [
       );
     },
   },
+  // Update the createBondingCurve tool
   {
     name: "createBondingCurve",
     description:
@@ -180,8 +203,8 @@ export const bondingCurveTools = [
         .describe("Name of the project, for which the token is created"),
       symbol: z.string().describe("Symbol of the project token"),
       description: z
-      .string()
-      .describe("Description of the project, up to 150 characters"),
+        .string()
+        .describe("Description of the project, up to 150 characters"),
       members: z
         .array(z.string())
         .optional()
@@ -207,15 +230,12 @@ export const bondingCurveTools = [
         ),
       baseMint: z.string().describe("Base token mint address (e.g. WSOL)"),
       tokenDecimals: z
-      .number()
-      .default(6)
-      .describe("Token decimals for the new project token"),
-      baseDecimals: z
-      .number()
-      .describe("Base token decimals for the existing base token"),
+        .number()
+        .default(6)
+        .describe("Token decimals for the new project token"),
       tokenTotalSupply: z
-      .number()
-      .describe("Total token supply for the new project token"),
+        .number()
+        .describe("Total token supply for the new project token"),
       image: z.string().describe("Base64 encoded image data"),
       twitterHandle: z
         .string()
@@ -266,7 +286,6 @@ export const bondingCurveTools = [
         baseMint,
         image,
         tokenDecimals = 6,
-        baseDecimals,
         tokenTotalSupply,
         twitterHandle,
         discordLink,
@@ -281,7 +300,24 @@ export const bondingCurveTools = [
         return mcpError(result.error!, result.suggestion);
       }
 
-      const { service, wallet } = result;
+      const { service, wallet, connection } = result;
+
+      // Get base token mint info to fetch decimals automatically
+      const baseMintPubkey = new PublicKey(baseMint);
+      const baseMintInfoResult = await getTokenInfo(connection, baseMintPubkey);
+
+      if (!baseMintInfoResult.success || !baseMintInfoResult.data) {
+        return mcpError(
+          `Failed to get base token information: ${baseMintInfoResult.error?.message}`,
+          "Check that the base token mint address is correct"
+        );
+      }
+
+      const baseDecimals = baseMintInfoResult.data.decimals;
+      const baseTokenSymbol = formatTokenSymbol(
+        baseMintInfoResult.data.metadata,
+        baseMintPubkey.toBase58()
+      );
 
       // Handle image if provided
       let imageBuffer;
@@ -298,7 +334,7 @@ export const bondingCurveTools = [
 
       let authorityAddressFromMultisig = undefined;
 
-      if ((isATeam && !members) || !members.length || threshold < 1) {
+      if ((isATeam && !members) || !members?.length || threshold < 1) {
         return mcpError(
           "Members are required if the project founder is a team of individuals",
           "Provide the addresses of the team members, and ensure the threshold is at least 1"
@@ -310,6 +346,7 @@ export const bondingCurveTools = [
           "Provide the addresses of the team members"
         );
       }
+
       let responseForLLM = ``;
       if (isATeam) {
         try {
@@ -343,17 +380,13 @@ export const bondingCurveTools = [
           }
 
           const multisigAddress = multisigResponse.data.multisigPda;
+          await ConfigService.setActiveSquadsMultisig(
+            multisigAddress.toBase58()
+          );
           authorityAddressFromMultisig =
             MultisigService.getMultisigVaultPda(multisigAddress).data;
 
-          // Should probably save the multisig address to config
-          // let's see if we need it later
-
-          responseForLLM += `\n Squads Multisig Creation response:  ${JSON.stringify(
-            multisigResponse.data,
-            null,
-            0
-          )}`;
+          responseForLLM += `\n✅ Squads Multisig created successfully! Multisig address: ${multisigAddress.toBase58()}`;
         } catch (err) {
           return mcpError(
             `Failed to create multisig: ${err}`,
@@ -395,7 +428,23 @@ export const bondingCurveTools = [
 
       return mcpText(
         responseForLLM +
-          `\n ✅ Successfully created token with bonding curve!\n\nToken: ${name} (${symbol})\nMint Address: ${createResult.data.tokenMintAddress}\nTransaction: ${createResult.data.tx}`
+          `🚀 Successfully created token on bonding curve!\n\n` +
+          `📝 Project: ${name} (${symbol})\n` +
+          `🔑 Token Address: ${createResult.data.tokenMintAddress}\n` +
+          `🪙 Token Supply: ${formatTokenAmount(
+            tokenTotalSupply,
+            tokenDecimals
+          )}\n` +
+          `💰 Base Token: ${baseTokenSymbol} (${baseDecimals} decimals)\n` +
+          `🎯 Raise Target: ${baseRaiseTarget} ${baseTokenSymbol}\n` +
+          (isATeam
+            ? `👥 Managed by team multisig with ${threshold} of ${members.length} required signatures\n`
+            : `👤 Managed by individual wallet: ${wallet.publicKey.toBase58()}\n`) +
+          `🔗 Transaction: ${createResult.data.tx}\n\n` +
+          `What's next?\n` +
+          `1. Fund your token position with the 'swap' command\n` +
+          `2. Share details with investors using 'getBondingCurveDetails'\n` +
+          `3. Once the raise target is met, migrate to Raydium with 'migrateToRaydium'`
       );
     },
   },
@@ -425,7 +474,7 @@ export const bondingCurveTools = [
         return mcpError(result.error!, result.suggestion);
       }
 
-      const { service } = result;
+      const { service, connection } = result;
       let mint = new PublicKey(mintAddress);
       const curveResult = await service.getBondingCurve(mint);
       if (!curveResult.success || !curveResult.data) {
@@ -434,6 +483,40 @@ export const bondingCurveTools = [
           "Check your mint address"
         );
       }
+
+      // Get token metadata for display
+      const tokenInfoResult = await getTokenInfo(connection, mint);
+      if (!tokenInfoResult.success || !tokenInfoResult.data) {
+        return mcpError(
+          `Failed to get token info: ${tokenInfoResult.error?.message}`,
+          "Check your mint address"
+        );
+      }
+      const tokenName = tokenInfoResult.success
+        ? tokenInfoResult.data.metadata?.name ||
+          mintAddress.substring(0, 8) + "..."
+        : mintAddress.substring(0, 8) + "...";
+
+      const tokenSymbol = tokenInfoResult.success
+        ? formatTokenSymbol(tokenInfoResult.data.metadata, mint.toBase58())
+        : mint.toBase58().substring(0, 4);
+
+      const baseMintInfoResult = await getTokenInfo(
+        connection,
+        curveResult.data.baseMint
+      );
+      if (!baseMintInfoResult.success || !baseMintInfoResult.data) {
+        return mcpError(
+          `Failed to get base token info: ${baseMintInfoResult.error?.message}`,
+          "Check the base mint address"
+        );
+      }
+      const baseTokenSymbol = baseMintInfoResult.success
+        ? formatTokenSymbol(
+            baseMintInfoResult.data.metadata,
+            curveResult.data.baseMint.toBase58()
+          )
+        : curveResult.data.baseMint.toBase58().substring(0, 4);
 
       const swapParams = {
         baseIn: !isBuy,
@@ -450,71 +533,41 @@ export const bondingCurveTools = [
         );
       }
 
-      const actionText = isBuy ? "bought tokens" : "sold tokens";
-      return mcpText(
-        `Successfully ${actionText}!\nTransaction: ${swapResult.data}`
-      );
-    },
-  },
-  {
-    name: "listBondingCurves",
-    description: "List all bonding curves and tokens",
-    schema: {},
-    async func() {
-      const result = await getBondingCurveService();
-      if (!result.success || !result.service) {
-        return mcpError(result.error!, result.suggestion);
+      const completedCurveCheck = await service.getBondingCurve(mint);
+      if (!completedCurveCheck.success || !completedCurveCheck.data) {
+        return mcpError(
+          `Failed to get bonding curve data: ${completedCurveCheck.error?.message}`,
+          "Check your mint address"
+        );
       }
+      const isCurveComplete =
+        completedCurveCheck.success && completedCurveCheck.data.complete;
 
-      const { service } = result;
-
-      const listResult = await service.fetchAllTokensAndProposalsOnCurve();
-
-      if (
-        !listResult.success ||
-        !listResult.data ||
-        listResult.data.length === 0
-      ) {
-        return mcpText("No bonding curves found.");
-      }
-
-      const formattedText = listResult.data
-        .map((item, index) => {
-          const curve = item.bondingCurve;
-          const proposal = item.proposal;
-          const metadata = item.metadata;
-
-          return `${index + 1}. ${proposal.name}
-   Complete: ${curve.complete ? "✅" : "❌"}
-   Metadata: ${JSON.stringify(metadata, null, 0)}
-   Name: ${proposal?.name || "N/A"}
-   Description: ${proposal?.description || "N/A"}
-   Website: ${proposal?.websiteUrl || "N/A"}
-   Twitter: ${proposal?.twitterHandle || "N/A"}
-   Discord: ${proposal?.discordLink || "N/A"}
-
-   Founder: ${proposal?.founderName || "N/A"} ${
-            proposal?.founderTwitter ? `(@${proposal.founderTwitter})` : ""
-          }
-    Bullish Thesis: ${proposal?.bullishThesis || "N/A"}
-    Authority Address: ${proposal.authorityAddress.toBase58()}
-    Token Decimals: ${curve.tokenDecimals}
-    Total Supply: ${curve.tokenTotalSupply
-      .div(new BN(10 ** curve.tokenDecimals))
-      .toString()}
-    Base Raise Target: ${curve.baseRaiseTarget
-      .div(new BN(10).pow(new BN(curve.baseDecimals)))
-      .toString()} 
-    Token Address: ${curve.tokenMint.toBase58()}
-    Base Mint Address: ${curve.baseMint.toBase58()}
-    Treasury Address: ${proposal.treasuryAddress.toBase58()}
-    URI: ${metadata?.uri || proposal?.logoUri || "N/A"}
-  `;
-        })
-        .join("\n");
+      const formattedAmount = isBuy
+        ? `${amount} ${baseTokenSymbol} → ~ ${formatTokenAmount(
+            minOutAmount,
+            curveResult.data.tokenDecimals
+          )} ${tokenSymbol}`
+        : `${amount} ${tokenSymbol} → ~ ${formatTokenAmount(
+            minOutAmount,
+            curveResult.data.baseDecimals
+          )} ${baseTokenSymbol}`;
 
       return mcpText(
-        `Found ${listResult.data.length} bonding curves:\n\n${formattedText}`
+        `✅ Swap completed successfully!\n\n` +
+          `🪙 ${isBuy ? "Bought" : "Sold"} tokens: ${formattedAmount}\n` +
+          `🔗 Transaction: ${swapResult.data}\n\n` +
+          (isCurveComplete
+            ? `🎉 Congratulations! The bonding curve is now complete.\n` +
+              `   You can now migrate to Raydium using 'migrateToRaydium'.\n\n`
+            : `📊 The bonding curve is still active.\n` +
+              `   You can check the current status with 'getBondingCurveDetails'.\n\n`) +
+          `What's next?\n` +
+          `• View your token balance with 'showWallet'\n` +
+          `• Check curve details with 'getBondingCurveDetails'\n` +
+          (isBuy
+            ? `• You can sell tokens later with 'swap' (isBuy: false)`
+            : `• You can buy more tokens with 'swap' (isBuy: true)`)
       );
     },
   },
@@ -532,17 +585,27 @@ export const bondingCurveTools = [
         return mcpError(result.error!, result.suggestion);
       }
 
-      const { service } = result;
-
+      const { service, connection } = result;
       let mint = new PublicKey(mintAddress);
 
-      const [curveResult, proposalResult, metadataResult] = await Promise.all([
+      // Use the new token utilities
+      const tokenInfoResult = await getTokenInfo(connection, mint);
+      if (!tokenInfoResult.success || !tokenInfoResult.data) {
+        return mcpError(
+          `Failed to get token info: ${tokenInfoResult.error?.message}`,
+          "Check your mint address"
+        );
+      }
+      const tokenMetadata = tokenInfoResult.success
+        ? tokenInfoResult.data.metadata
+        : undefined;
+
+      const [curveResult, proposalResult] = await Promise.all([
         service.getBondingCurve(mint),
         service.getProposal(mint),
-        service.getMetadata(mint),
       ]);
 
-      if (!curveResult.success) {
+      if (!curveResult.success || !curveResult.data) {
         return mcpError(
           `Failed to get bonding curve data: ${curveResult.error?.message}`,
           "Check your mint address"
@@ -551,49 +614,89 @@ export const bondingCurveTools = [
 
       const curve = curveResult.data;
       const proposal = proposalResult.success ? proposalResult.data : null;
-      const metadata = metadataResult.success ? metadataResult.data : null;
 
-      return mcpText(`📊 Bonding Curve Details: ${proposal?.name} 
-  🔨 Metadata: ${JSON.stringify(metadata, null, 0)}
-  🔑 Mint Address: ${mint.toString()}
-  🪙 Token Details:
-    - Decimals: ${curve?.tokenDecimals}
-    - Total Supply: ${curve?.tokenTotalSupply
-      .div(new BN(10 ** curve.tokenDecimals))
-      .toString()}
-    - URI: ${metadata?.uri || proposal?.logoUri || "N/A"}
-    - Authority Address: ${proposal?.authorityAddress.toBase58()}
-  🏦 Treasury Address: ${proposal?.treasuryAddress.toBase58()}
-  📈 Bonding Curve:
-    - Complete: ${curve?.complete ? "✅" : "❌"}
-    - Total Supply: ${curve?.tokenTotalSupply
-      .div(new BN(10 ** curve.tokenDecimals))
-      .toString()}
-    - Base Raise Target: ${curve?.baseRaiseTarget
-      .div(new BN(10 ** curve.baseDecimals))
-      .toString()} base tokens
-    - Token Decimals: ${curve?.tokenDecimals}
-    - Raised Amount: ${curve?.baseRaiseTarget
-      .div(new BN(10 ** curve.baseDecimals))
-      .toString()} base tokens
-    - Tokens left to buy: ${curve?.realTokenReserves
-      .div(new BN(10 ** curve.tokenDecimals))
-      .toString()}
-
-  🧑‍💼 Contacts:
-    - Website: ${proposal?.websiteUrl || "N/A"}
-    - Twitter: ${proposal?.twitterHandle || "N/A"}
-    - Discord: ${proposal?.discordLink || "N/A"}
-    - Founder: ${proposal?.founderName || "N/A"} ${
-        proposal?.founderTwitter ? `(@${proposal.founderTwitter})` : ""
+      // Get base token info
+      const baseMintInfoResult = await getTokenInfo(connection, curve.baseMint);
+      if (!baseMintInfoResult.success || !baseMintInfoResult.data) {
+        return mcpError(
+          `Failed to get base token info: ${baseMintInfoResult.error?.message}`,
+          "Check the base mint address"
+        );
       }
+      const baseTokenSymbol = baseMintInfoResult.success
+        ? formatTokenSymbol(
+            baseMintInfoResult.data.metadata,
+            curve.baseMint.toBase58()
+          )
+        : curve.baseMint.toBase58().substring(0, 4);
 
-  📝 Additional Info:
-    - Description: ${proposal?.description || "N/A"}
-    - Thesis: ${proposal?.bullishThesis || "N/A"}
-  `);
+      // Calculate remaining tokens to buy
+      const remainingTokens = curve.realTokenReserves;
+      const formattedRemainingTokens = formatTokenAmount(
+        remainingTokens.toString(),
+        curve.tokenDecimals
+      );
+
+      // Calculate raised amount
+      const raisedAmount = curve.realBaseReserves;
+      const formattedRaisedAmount = formatTokenAmount(
+        raisedAmount.toString(),
+        curve.baseDecimals
+      );
+
+      // Calculate total supply
+      const formattedTotalSupply = formatTokenAmount(
+        curve.tokenTotalSupply.toString(),
+        curve.tokenDecimals
+      );
+
+      // Calculate base raise target
+      const formattedBaseRaiseTarget = formatTokenAmount(
+        curve.baseRaiseTarget.toString(),
+        curve.baseDecimals
+      );
+
+      // Enhanced formatting
+      return mcpText(
+        `📊 Bonding Curve Details: ${
+          proposal?.name || tokenMetadata?.name || mint.toString()
+        }\n\n` +
+          `🪙 Token Information:\n` +
+          `  • Name: ${tokenMetadata?.name || "N/A"}\n` +
+          `  • Symbol: ${tokenMetadata?.symbol || "N/A"}\n` +
+          `  • Mint Address: ${mint.toString()}\n` +
+          `  • Decimals: ${curve?.tokenDecimals}\n` +
+          `  • Total Supply: ${formattedTotalSupply}\n\n` +
+          `📈 Bonding Curve Status:\n` +
+          `  • Complete: ${curve?.complete ? "✅" : "❌"}\n` +
+          `  • Base Raise Target: ${formattedBaseRaiseTarget} ${baseTokenSymbol}\n` +
+          `  • Raised Amount: ${formattedRaisedAmount} ${baseTokenSymbol} ` +
+          `(${(
+            (Number(formattedRaisedAmount) / Number(formattedBaseRaiseTarget)) *
+            100
+          ).toFixed(2)}%)\n` +
+          `  • Tokens left to buy: ${formattedRemainingTokens}\n\n` +
+          `🏦 Project Information:\n` +
+          `  • Description: ${proposal?.description || "N/A"}\n` +
+          `  • Website: ${proposal?.websiteUrl || "N/A"}\n` +
+          `  • Twitter: ${proposal?.twitterHandle || "N/A"}\n` +
+          `  • Discord: ${proposal?.discordLink || "N/A"}\n` +
+          `  • Founder: ${proposal?.founderName || "N/A"} ${
+            proposal?.founderTwitter ? `(@${proposal.founderTwitter})` : ""
+          }\n\n` +
+          `💼 Management:\n` +
+          `  • Treasury Address: ${proposal?.treasuryAddress.toBase58()}\n` +
+          `  • Authority Address: ${proposal?.authorityAddress.toBase58()}\n\n` +
+          `💡 Investment Thesis:\n` +
+          `  ${proposal?.bullishThesis || "No thesis provided"}\n\n` +
+          `⚙️ What you can do:\n` +
+          `  • To buy tokens: Use 'simulateSwap' to preview and 'swap' to execute\n` +
+          `  • To check max investment: Use 'getMaxBuy'\n` +
+          `  • When complete: Use 'migrateToRaydium' to create a Raydium pool`
+      );
     },
   },
+  // Update the simulateSwap function
   {
     name: "simulateSwap",
     description: "Simulate a token swap without executing the transaction",
@@ -628,25 +731,58 @@ export const bondingCurveTools = [
         return mcpError(result.error!, result.suggestion);
       }
 
-      const { service } = result;
+      const { service, connection } = result;
       const mint = new PublicKey(mintAddress);
 
       try {
         const curveResult = await service.getBondingCurve(mint);
-        if (!curveResult.success) {
+        if (!curveResult.success || !curveResult.data) {
           return mcpError(
             `Failed to get bonding curve data: ${curveResult.error?.message}`,
             "Check the mint address and try again"
           );
         }
-        // Get token name for display
-        const proposalResult = await service.getProposal(mint);
-        const tokenName = proposalResult.success
-          ? proposalResult.data?.name
-          : mintAddress;
+
+        // Get token and base token info for better display
+        const tokenInfoResult = await getTokenInfo(connection, mint);
+        if (!tokenInfoResult.success || !tokenInfoResult.data) {
+          return mcpError(
+            `Failed to get token info: ${tokenInfoResult.error?.message}`,
+            "Check the mint address and try again"
+          );
+        }
+        const tokenName = tokenInfoResult.success
+          ? tokenInfoResult.data.metadata?.name ||
+            mint.toBase58().substring(0, 8) + "..."
+          : mintAddress.substring(0, 8) + "...";
+
+        const tokenSymbol = tokenInfoResult.success
+          ? formatTokenSymbol(tokenInfoResult.data.metadata, mint.toBase58())
+          : mint.toBase58().substring(0, 4);
+
+        const baseMintInfoResult = await getTokenInfo(
+          connection,
+          curveResult.data.baseMint
+        );
+        if (!baseMintInfoResult.success || !baseMintInfoResult.data) {
+          return mcpError(
+            `Failed to get base token info: ${baseMintInfoResult.error?.message}`,
+            "Check the base mint address"
+          );
+        }
+        const baseTokenSymbol = baseMintInfoResult.success
+          ? formatTokenSymbol(
+              baseMintInfoResult.data.metadata,
+              curveResult.data.baseMint.toBase58()
+            )
+          : curveResult.data.baseMint.toBase58().substring(0, 4);
+
         if (isBuy) {
-          // Convert base amount to smallest unit
-          const amountBN = new BN(amount * curveResult.data?.baseDecimals!);
+          // Convert base amount to smallest unit (lamports, etc)
+          const baseDecimals = curveResult.data.baseDecimals;
+          const amountBN = new BN(
+            Math.round(amount * Math.pow(10, baseDecimals))
+          );
 
           // Simulate buy
           const simulationResult = await service.simulateBuy(
@@ -657,61 +793,58 @@ export const bondingCurveTools = [
 
           if (!simulationResult.success) {
             return mcpError(
-              `Failed to simulate buy: ${simulationResult.error?.message}`,
-              "Check your inputs and try again"
+              `Simulation failed: ${simulationResult.error?.message}`,
+              "Check your input and try again"
             );
           }
 
           // Format the results for display
           const sim = simulationResult.data!;
-          const tokenDecimalsFactor = Math.pow(10, sim.tokenDecimals);
-          const baseDecimalsFactor = Math.pow(10, sim.baseDecimals);
-          const expectedTokenAmount = sim.tokenAmount
-            .div(new BN(tokenDecimalsFactor))
-            .toNumber();
-          const minTokenAmount = sim.minTokenAmount
-            .div(new BN(tokenDecimalsFactor))
-            .toNumber();
-          const feeInBase = sim.feeAmount
-            .div(new BN(baseDecimalsFactor))
-            .toNumber();
-          const netBaseCostRequired = amount - feeInBase;
+          const expectedTokenAmount = formatTokenAmount(
+            sim.tokenAmount.toString(),
+            sim.tokenDecimals
+          );
+          const minTokenAmount = formatTokenAmount(
+            sim.minTokenAmount.toString(),
+            sim.tokenDecimals
+          );
+          const feeInBase = formatTokenAmount(
+            sim.feeAmount.toString(),
+            sim.baseDecimals
+          );
+          const netBaseCostRequired = (amount - Number(feeInBase)).toFixed(6);
 
           // Format completion status
           const completionStatus = sim.willComplete
             ? "⚠️ This purchase will complete the bonding curve!"
             : "This purchase will not complete the bonding curve.";
 
-          return mcpText(`🔮 Buy Simulation for ${tokenName}
+          // For swap, pass human-readable values (not scaled)
+          const minOutHuman =
+            Number(sim.minTokenAmount.toString()) /
+            Math.pow(10, sim.tokenDecimals);
 
-💰 Input: ${amount} 
-🪙 Expected output: ${expectedTokenAmount.toFixed(6)} tokens
-🪙 Minimum output (with ${slippagePercent}% slippage): ${minTokenAmount.toFixed(
-            6
-          )} tokens
-💸 Fee: ${feeInBase.toFixed(6)} 
-💸 Net cost: ${netBaseCostRequired.toFixed(6)} 
-📊 Price impact: ${sim.priceImpact.toFixed(2)}%
-💱 Price per token: ${sim.pricePerToken.toFixed(6)} 
-${completionStatus}
-
-To execute this swap, use the \`swap\` tool with:
-  --mintAddress "${mintAddress}" --isBuy true --amount ${amount} --slippagePercent ${slippagePercent}`);
-        } else {
-          // Convert token amount to smallest unit
-          const curveResult = await service.getBondingCurve(mint);
-          if (!curveResult.success) {
-            return mcpError(
-              `Failed to get bonding curve: ${curveResult.error?.message}`,
-              "Check the mint address and try again"
-            );
-          }
-
-          const tokenDecimalsFactor = Math.pow(
-            10,
-            curveResult.data?.tokenDecimals!
+          return mcpText(
+            `🔮 Buy Simulation for ${tokenName} (${tokenSymbol})\n\n` +
+              `💰 Input: ${amount} ${baseTokenSymbol}\n` +
+              `🪙 Expected output: ${expectedTokenAmount} ${tokenSymbol}\n` +
+              `🪙 Minimum output (with ${slippagePercent}% slippage): ${minTokenAmount} ${tokenSymbol}\n` +
+              `💸 Fee: ${feeInBase} ${baseTokenSymbol}\n` +
+              `💸 Net cost: ${netBaseCostRequired} ${baseTokenSymbol}\n` +
+              `📊 Price impact: ${sim.priceImpact.toFixed(2)}%\n` +
+              `💱 Price per token: ${sim.pricePerToken.toFixed(
+                6
+              )} ${baseTokenSymbol}\n` +
+              `${completionStatus}\n\n` +
+              `To execute this swap, use the \`swap\` tool with:\n` +
+              `  --mintAddress "${mintAddress}" --isBuy true --amount ${amount} --minOutAmount ${minOutHuman}`
           );
-          const amountBN = new BN(amount * tokenDecimalsFactor);
+        } else {
+          // Sell: convert token amount to smallest unit
+          const tokenDecimals = curveResult.data.tokenDecimals;
+          const amountBN = new BN(
+            Math.round(amount * Math.pow(10, tokenDecimals))
+          );
 
           // Simulate sell
           const simulationResult = await service.simulateSell(
@@ -722,43 +855,53 @@ To execute this swap, use the \`swap\` tool with:
 
           if (!simulationResult.success) {
             return mcpError(
-              `Failed to simulate sell: ${simulationResult.error?.message}`,
-              "Check your inputs and try again"
+              `Simulation failed: ${simulationResult.error?.message}`,
+              "Check your input and try again"
             );
           }
 
-          // Format the results for display
           const sim = simulationResult.data!;
-          const expectedBaseAmount = sim.baseAmount
-            .div(new BN(10 ** sim.baseDecimals))
-            .toNumber();
-          const minBaseAmount = sim.minBaseAmount
-            .div(new BN(10 ** sim.baseDecimals))
-            .toNumber();
-          const feeInBase = sim.feeAmount
-            .div(new BN(10 ** sim.baseDecimals))
-            .toNumber();
-          const netBaseRecieved = expectedBaseAmount; // Already net of fee
+          const expectedBaseAmount = formatTokenAmount(
+            sim.baseAmount.toString(),
+            sim.baseDecimals
+          );
+          const minBaseAmount = formatTokenAmount(
+            sim.minBaseAmount.toString(),
+            sim.baseDecimals
+          );
+          const feeInBase = formatTokenAmount(
+            sim.feeAmount.toString(),
+            sim.baseDecimals
+          );
+          const netTokenAmount = (amount - Number(feeInBase)).toFixed(6);
 
-          return mcpText(`🔮 Sell Simulation for ${tokenName}
+          const completionStatus = ""; // Not used for sell
 
-🪙 Input: ${amount} tokens
-💰 Expected output: ${expectedBaseAmount.toFixed(6)} 
-💰 Minimum output (with ${slippagePercent}% slippage): ${minBaseAmount.toFixed(
-            6
-          )} 
-💸 Fee: ${feeInBase.toFixed(6)} 
-💸 Net received: ${netBaseRecieved.toFixed(6)} 
-📊 Price impact: ${sim.priceImpact.toFixed(2)}%
-💱 Price per token: ${sim.pricePerToken.toFixed(6)} 
+          // For swap, pass human-readable values (not scaled)
+          const minOutHuman =
+            Number(sim.minBaseAmount.toString()) /
+            Math.pow(10, sim.baseDecimals);
 
-To execute this swap, use the \`swap\` tool with:
-  --mintAddress "${mintAddress}" --isBuy false --amount ${amount} --slippagePercent ${slippagePercent}`);
+          return mcpText(
+            `🔮 Sell Simulation for ${tokenName} (${tokenSymbol})\n\n` +
+              `💰 Input: ${amount} ${tokenSymbol}\n` +
+              `🪙 Expected output: ${expectedBaseAmount} ${baseTokenSymbol}\n` +
+              `🪙 Minimum output (with ${slippagePercent}% slippage): ${minBaseAmount} ${baseTokenSymbol}\n` +
+              `💸 Fee: ${feeInBase} ${baseTokenSymbol}\n` +
+              `💸 Net output: ${netTokenAmount} ${baseTokenSymbol}\n` +
+              `📊 Price impact: ${sim.priceImpact.toFixed(2)}%\n` +
+              `💱 Price per token: ${sim.pricePerToken.toFixed(
+                6
+              )} ${baseTokenSymbol}\n` +
+              `${completionStatus}\n\n` +
+              `To execute this swap, use the \`swap\` tool with:\n` +
+              `  --mintAddress "${mintAddress}" --isBuy false --amount ${amount} --minOutAmount ${minOutHuman}`
+          );
         }
       } catch (error: any) {
         return mcpError(
           `Simulation failed: ${error.message}`,
-          "Check your inputs and try again"
+          "Check your input and try again"
         );
       }
     },
@@ -915,6 +1058,68 @@ Note: This is an estimate and actual values may vary slightly due to market cond
           "Please try again or check if migration has already been completed"
         );
       }
+    },
+  },
+  {
+    name: "listBondingCurves",
+    description: "List all bonding curves and tokens",
+    schema: {},
+    async func() {
+      const result = await getBondingCurveService();
+      if (!result.success || !result.service) {
+        return mcpError(result.error!, result.suggestion);
+      }
+
+      const { service } = result;
+
+      const listResult = await service.fetchAllTokensAndProposalsOnCurve();
+
+      if (
+        !listResult.success ||
+        !listResult.data ||
+        listResult.data.length === 0
+      ) {
+        return mcpText("No bonding curves found.");
+      }
+
+      const formattedText = listResult.data
+        .map((item, index) => {
+          const curve = item.bondingCurve;
+          const proposal = item.proposal;
+          const metadata = item.metadata;
+
+          return `${index + 1}. ${proposal.name}
+   Complete: ${curve.complete ? "✅" : "❌"}
+   Metadata: ${JSON.stringify(metadata, null, 0)}
+   Name: ${proposal?.name || "N/A"}
+   Description: ${proposal?.description || "N/A"}
+   Website: ${proposal?.websiteUrl || "N/A"}
+   Twitter: ${proposal?.twitterHandle || "N/A"}
+   Discord: ${proposal?.discordLink || "N/A"}
+
+   Founder: ${proposal?.founderName || "N/A"} ${
+            proposal?.founderTwitter ? `(@${proposal.founderTwitter})` : ""
+          }
+    Bullish Thesis: ${proposal?.bullishThesis || "N/A"}
+    Authority Address: ${proposal.authorityAddress.toBase58()}
+    Token Decimals: ${curve.tokenDecimals}
+    Total Supply: ${curve.tokenTotalSupply
+      .div(new BN(10 ** curve.tokenDecimals))
+      .toString()}
+    Base Raise Target: ${curve.baseRaiseTarget
+      .div(new BN(10).pow(new BN(curve.baseDecimals)))
+      .toString()} 
+    Token Address: ${curve.tokenMint.toBase58()}
+    Base Mint Address: ${curve.baseMint.toBase58()}
+    Treasury Address: ${proposal.treasuryAddress.toBase58()}
+    URI: ${metadata?.uri || proposal?.logoUri || "N/A"}
+  `;
+        })
+        .join("\n");
+
+      return mcpText(
+        `Found ${listResult.data.length} bonding curves:\n\n${formattedText}`
+      );
     },
   },
 ];

@@ -18,7 +18,6 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
-  getTokenMetadata,
 } from "@solana/spl-token";
 import { ServiceResponse } from "../types/service-types";
 import { METADATA_PROGRAM_ID, RAYDIUM_PROGRAM_IDS } from "../utils/constants";
@@ -41,6 +40,7 @@ import { irysUploader } from "@metaplex-foundation/umi-uploader-irys";
 import { findMetadataPda } from "@metaplex-foundation/mpl-token-metadata";
 import { BondingCurve } from "../types/bonding_curve";
 import { mockStorage } from "@metaplex-foundation/umi-storage-mock";
+import { getTokenInfo } from "../utils/token-utils";
 
 export class BondingCurveService {
   private program: Program<BondingCurve>;
@@ -479,24 +479,6 @@ export class BondingCurveService {
     }
   }
 
-  /** Fetch metadata */
-  async getMetadata(mint: PublicKey): Promise<ServiceResponse<any>> {
-    try {
-      const data = await getTokenMetadata(
-        this.provider.connection,
-        mint,
-        undefined,
-        new PublicKey(TOKEN_PROGRAM_ID)
-      );
-      return { success: true, data };
-    } catch (error: any) {
-      return {
-        success: false,
-        error: { message: `Fetch metadata failed: ${error}`, details: error },
-      };
-    }
-  }
-
   /** Fetch all tokens/proposal on BondingCurve */
   async fetchAllTokensAndProposalsOnCurve(): Promise<
     ServiceResponse<BondingCurveAndProposalData[]>
@@ -511,12 +493,17 @@ export class BondingCurveService {
           const proposal = await this.program.account.proposal.fetch(
             proposalPda
           );
-          const metadata = await this.getMetadata(curve.tokenMint);
+          const metadata = (
+            await getTokenInfo(this.provider.connection, curve.tokenMint)
+          ).data;
           return {
             mint: curve.tokenMint,
             bondingCurve: curve,
             proposal,
-            metadata,
+            metadata: {
+              metadata: metadata?.metadata,
+              decimals: metadata?.decimals,
+            },
           };
         })
       );

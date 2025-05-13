@@ -2,6 +2,9 @@ import { PublicKey } from "@solana/web3.js";
 import { WalletService } from "../services/wallet-service";
 import { ConnectionService } from "../services/connection-service";
 import { ConfigService } from "../services/config-service";
+import { Connection } from "@solana/web3.js";
+import { Keypair } from "@solana/web3.js";
+import { Config } from "../types";
 
 type McpHookOptions = {
   requireWallet?: boolean;
@@ -13,9 +16,9 @@ type McpHookResult = {
   success: boolean;
   error?: string;
   suggestion?: string;
-  connection?: any;
-  keypair?: any;
-  config?: any;
+  connection?: Connection | undefined;
+  keypair?: Keypair | undefined;
+  config?: Config | undefined;
   multisigAddress?: PublicKey | undefined;
 };
 

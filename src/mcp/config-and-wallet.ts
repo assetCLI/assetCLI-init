@@ -3,9 +3,20 @@ import { z } from "zod";
 import { ConfigService } from "../services/config-service";
 import { WalletService } from "../services/wallet-service";
 import { mcpText, useMcpContext } from "../utils/mcp-hooks";
-import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import {
+  getMint,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+} from "@solana/spl-token";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
-
+import { PublicKey } from "@solana/web3.js";
+import {
+  fetchMetadataFromSeeds,
+  Metadata,
+  mplTokenMetadata,
+} from "@metaplex-foundation/mpl-token-metadata";
+import { createUmi } from "@metaplex-foundation/umi-bundle-defaults";
+import { publicKey } from "@metaplex-foundation/umi";
 export function registerConfigAndWalletTools(server: McpServer) {
   server.tool(
     "setNetwork",
@@ -110,21 +121,57 @@ export function registerConfigAndWalletTools(server: McpServer) {
           programId: TOKEN_2022_PROGRAM_ID,
         }),
       ]);
+      const umi = createUmi(connection).use(mplTokenMetadata());
       const allTokens = [...classicTokens.value, ...t22Tokens.value];
+      let mintsForWhichMetadataFailed: string[] = [];
+      const allTokensMints = await Promise.all(
+        allTokens.map(async (token) => {
+          const mintKey = new PublicKey(token.account.data.parsed.info.mint);
+          const mintInfo = await getMint(
+            connection,
+            mintKey,
+            "confirmed",
+            token.account.owner
+          );
+          let metadata: Metadata | undefined = undefined;
+          try {
+            metadata = await fetchMetadataFromSeeds(umi, {
+              mint: publicKey(mintKey),
+            });
+          } catch (e) {
+            mintsForWhichMetadataFailed.push(mintKey.toBase58());
+          }
+          return {
+            mintInfo,
+            metadata,
+            token,
+          };
+        })
+      );
       return mcpText(
         `{
         "wallet":${wallet.publicKey.toBase58()},
         "solBalance":${solBalance / LAMPORTS_PER_SOL} SOL,
         "tokens":${JSON.stringify(
-          allTokens.map((token) => ({
+          allTokensMints.map(({ mintInfo, metadata, token }) => ({
             pubkey: token.pubkey.toBase58(),
-            mint: token.account.data.parsed.info.mint,
+            mint: {
+              ...mintInfo,
+              supply: mintInfo.supply.toString(),
+            },
+            metadata: {
+              name: metadata?.name,
+              symbol: metadata?.symbol,
+              uri: metadata?.uri,
+            },
             programId: token.account.owner.toBase58(),
             amount: token.account.data.parsed.info.tokenAmount,
           }))
         )},
         }`,
-        "Fetched wallet info"
+        `Metadata fetch failed for mints: ${mintsForWhichMetadataFailed.join(
+          `, `
+        )}. `
       );
     } catch (error) {
       return {
@@ -149,7 +196,7 @@ export function registerConfigAndWalletTools(server: McpServer) {
         requireConfig: false,
       });
 
-      if (!context.success) {
+      if (!context.success || !context.connection) {
         return {
           content: [
             { type: "text", text: context.error || "Failed to get context" },

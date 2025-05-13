@@ -9,6 +9,11 @@ import {
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
+import {
+  formatTokenAmount,
+  formatTokenSymbol,
+  getTokenInfo,
+} from "../utils/token-utils";
 
 // Standalone Squads Multisig Tool
 export function registerMultisigTools(server: McpServer) {
@@ -24,7 +29,7 @@ export function registerMultisigTools(server: McpServer) {
     async ({ name, members, threshold }) => {
       try {
         const context = await useMcpContext({ requireWallet: true });
-        if (!context.success) {
+        if (!context.success || !context.keypair || !context.connection) {
           return {
             content: [
               {
@@ -192,7 +197,12 @@ export function registerMultisigTools(server: McpServer) {
           requireMultisig: true,
         });
 
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.keypair ||
+          !context.multisigAddress ||
+          !context.connection
+        ) {
           return {
             content: [
               {
@@ -274,7 +284,7 @@ export function registerMultisigTools(server: McpServer) {
 
         // Get connection using the context hook
         const context = await useMcpContext({ requireWallet: false });
-        if (!context.success) {
+        if (!context.success || !context.connection) {
           return {
             content: [
               {
@@ -338,6 +348,7 @@ export function registerMultisigTools(server: McpServer) {
     }
   );
 
+  // Update the multisigInfo function (around line 279)
   server.tool(
     "multisigInfo",
     "Get information about the configured standalone multisig",
@@ -346,7 +357,11 @@ export function registerMultisigTools(server: McpServer) {
       try {
         // Use context hook to get connection and multisig address
         const context = await useMcpContext({ requireMultisig: true });
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.connection ||
+          !context.multisigAddress
+        ) {
           return {
             content: [
               {
@@ -394,26 +409,58 @@ export function registerMultisigTools(server: McpServer) {
         // Get assets held by the multisig
         const solBalance = await connection.getBalance(vaultPdaRes.data);
         const [classicTokens, t22Tokens] = await Promise.all([
-          context.connection.getParsedTokenAccountsByOwner(vaultPdaRes.data, {
+          connection.getParsedTokenAccountsByOwner(vaultPdaRes.data, {
             programId: TOKEN_PROGRAM_ID,
           }),
-          context.connection.getParsedTokenAccountsByOwner(vaultPdaRes.data, {
+          connection.getParsedTokenAccountsByOwner(vaultPdaRes.data, {
             programId: TOKEN_2022_PROGRAM_ID,
           }),
         ]);
+
         const allTokens = [...classicTokens.value, ...t22Tokens.value];
+
+        // Enhanced token information with metadata
+        const tokenDetails = await Promise.all(
+          allTokens.map(async (token) => {
+            const mintKey = new PublicKey(token.account.data.parsed.info.mint);
+            const tokenInfoResult = await getTokenInfo(
+              connection,
+              mintKey,
+              token.account.owner
+            );
+
+            return {
+              pubkey: token.pubkey.toBase58(),
+              mint: token.account.data.parsed.info.mint,
+              programId: token.account.owner.toBase58(),
+              amount: token.account.data.parsed.info.tokenAmount,
+              // Add enhanced details if available
+              symbol: tokenInfoResult.success
+                ? formatTokenSymbol(
+                    tokenInfoResult.data?.metadata,
+                    mintKey.toBase58()
+                  )
+                : undefined,
+              name: tokenInfoResult.success
+                ? tokenInfoResult.data?.metadata?.name
+                : undefined,
+              formattedAmount: tokenInfoResult.success
+                ? formatTokenAmount(
+                    token.account.data.parsed.info.tokenAmount.amount,
+                    tokenInfoResult.data?.decimals || 0
+                  )
+                : token.account.data.parsed.info.tokenAmount.uiAmountString,
+            };
+          })
+        );
+
         // Format the response
         const info = multisigInfoRes.data;
         const result = {
           address: multisigAddress!.toBase58(),
           vault: vaultPdaRes.data.toBase58(),
           solBalance: `${solBalance / LAMPORTS_PER_SOL} SOL`,
-          tokens: allTokens.map((token) => ({
-            pubkey: token.pubkey.toBase58(),
-            mint: token.account.data.parsed.info.mint,
-            programId: token.account.owner.toBase58(),
-            amount: token.account.data.parsed.info.tokenAmount,
-          })),
+          tokens: tokenDetails,
           members: (info.members || []).map((m) => m.toBase58()),
           memberCount: info.memberCount,
           threshold: info.threshold,
@@ -459,7 +506,12 @@ export function registerMultisigTools(server: McpServer) {
           requireMultisig: true,
         });
 
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.keypair ||
+          !context.multisigAddress ||
+          !context.connection
+        ) {
           return {
             content: [
               {
@@ -579,7 +631,12 @@ export function registerMultisigTools(server: McpServer) {
           requireMultisig: true,
         });
 
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.keypair ||
+          !context.multisigAddress ||
+          !context.connection
+        ) {
           return {
             content: [
               {
@@ -665,7 +722,12 @@ export function registerMultisigTools(server: McpServer) {
           requireMultisig: true,
         });
 
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.keypair ||
+          !context.multisigAddress ||
+          !context.connection
+        ) {
           return {
             content: [
               {
@@ -734,7 +796,12 @@ export function registerMultisigTools(server: McpServer) {
           requireMultisig: true,
         });
 
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.keypair ||
+          !context.multisigAddress ||
+          !context.connection
+        ) {
           return {
             content: [
               {
@@ -807,7 +874,11 @@ export function registerMultisigTools(server: McpServer) {
       try {
         // Use context hook to get connection and multisig address
         const context = await useMcpContext({ requireMultisig: true });
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.connection ||
+          !context.multisigAddress
+        ) {
           return {
             content: [
               {
@@ -909,7 +980,12 @@ export function registerMultisigTools(server: McpServer) {
           requireMultisig: true,
         });
 
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.connection ||
+          !context.keypair ||
+          !context.multisigAddress
+        ) {
           return {
             content: [
               {
@@ -1046,7 +1122,12 @@ export function registerMultisigTools(server: McpServer) {
           requireMultisig: true,
         });
 
-        if (!context.success) {
+        if (
+          !context.success ||
+          !context.keypair ||
+          !context.multisigAddress ||
+          !context.connection
+        ) {
           return {
             content: [
               {

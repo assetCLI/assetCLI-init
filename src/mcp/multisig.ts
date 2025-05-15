@@ -20,7 +20,7 @@ export function registerMultisigTools(server: McpServer) {
   // Add createMultisig tool
   server.tool(
     "createMultisig",
-    "Create a new standalone Squads multisig",
+    "For creating a new standalone multisig. This is a Squads multisig that can be used for managing funds and transactions.",
     {
       name: z.string(),
       members: z.array(z.string()),

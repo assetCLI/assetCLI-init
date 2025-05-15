@@ -196,7 +196,7 @@ export const bondingCurveTools = [
   {
     name: "createBondingCurve",
     description:
-      "Launch a new project token on a linear bonding curve, a base token is used to raise funds. The tool expects the user to be either an individual or a team of individuals launching a project token on Solana. The team should be able to create a Squads multisig and provide vault address as the vault and authority address. The tool will create a new token mint and initialize the bonding curve with the provided parameters. If its a team, it is expected that they must provide members and even the optional fields like founder name, twitter handle, etc. The tool will also provide a base64 encoded image data for the token logo. ",
+      "Launch a new bonding curve project token on the bonding curve protocol. Available for both individuals and teams. For teams, a multisig will be created to manage the project, the multisig creation will be handled in this tool itself using the isATeam parameter. The bonding curve will raise the baseRaiseTarget amount of base tokens, and the project token will be created with the specified name, symbol, and description. The project token will be managed by the multisig or the individual wallet after migration. At migration, the project token will be migrated to a Raydium pool. The raised funds will be distributed 80/20 to the multisig/individual wallet and the Raydium pool respectively. The bonding curve treasury will be used to fund the project. The project token supply is also distributed 50/30/20 to bonding curve swaps and trade, the Raydium pool, and the multisig/individual wallet respectively.",
     schema: {
       name: z
         .string()

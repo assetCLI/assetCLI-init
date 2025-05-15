@@ -8,10 +8,7 @@
   "scripts": {
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc",
-    "test": "mocha -r ts-node/register tests/**/*.test.ts",
-    "test:integrated": "mocha -r ts-node/register tests/integrated-dao-test.ts",
-    "test:standard": "mocha -r ts-node/register tests/standard-dao-test.ts"
+    "build": "tsc"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
@@ -22,6 +19,7 @@
     "@metaplex-foundation/umi-storage-mock": "^1.2.0",
     "@metaplex-foundation/umi-uploader-irys": "^1.2.0",
     "@modelcontextprotocol/sdk": "^1.11.2",
+    "@perena/numeraire-sdk": "^1.0.21",
     "@solana/spl-token": "^0.4.13",
     "@solana/web3.js": "^1.98.2",
     "@sqds/multisig": "^2.1.3",

@@ -10,6 +10,7 @@ import { registerResource } from "./mcp/resource";
 import { registerTestTokenTools } from "./mcp/test-token";
 import { registerMultisigTools } from "./mcp/multisig";
 import { registerBondingCurveTools } from "./mcp/bonding-curve";
+import { registerPeranaTools } from "./mcp/perana-tools";
 
 const server = new McpServer({
   name: "AssetCLI",
@@ -19,6 +20,7 @@ registerConfigAndWalletTools(server);
 registerMultisigTools(server);
 registerTestTokenTools(server);
 registerBondingCurveTools(server);
+registerPeranaTools(server);
 
 // Get Transaction
 server.tool(

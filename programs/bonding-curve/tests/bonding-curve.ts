@@ -24,12 +24,6 @@ import { readFile } from "fs/promises";
 import { findMetadataPda } from "@metaplex-foundation/mpl-token-metadata";
 import path from "path";
 import assert from "assert";
-import {
-  Connection,
-  Keypair,
-  LAMPORTS_PER_SOL,
-  PublicKey,
-} from "@solana/web3.js";
 import { BN } from "bn.js";
 
 describe("bonding-curve", async () => {
@@ -73,7 +67,7 @@ describe("bonding-curve", async () => {
     ],
     program.programId
   );
-  const baseMintKeypair = Keypair.generate();
+  const baseMintKeypair = anchor.web3.Keypair.generate();
   const baseMint = baseMintKeypair.publicKey;
   const userBaseAccount = anchor.utils.token.associatedAddress({
     mint: baseMint,
@@ -147,7 +141,7 @@ describe("bonding-curve", async () => {
     "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
   );
 
-  const treasuryAddress = Keypair.generate().publicKey;
+  const treasuryAddress = anchor.web3.Keypair.generate().publicKey;
   const authorityAddressForProposal = wallet.publicKey;
 
   // Calculate PDA addresses for Raydium integration
@@ -284,7 +278,7 @@ describe("bonding-curve", async () => {
         baseMint,
         userBaseAccount,
         wallet.publicKey,
-        1010 * LAMPORTS_PER_SOL,
+        1010 * anchor.web3.LAMPORTS_PER_SOL,
         []
       );
       console.log("Minted 1010 tokens to base account");
@@ -957,7 +951,7 @@ describe("bonding-curve", async () => {
     );
     const tx = new anchor.web3.Transaction();
     const swapIx = await program.methods
-      .raydiumSwap(new anchor.BN(1 * LAMPORTS_PER_SOL), new BN(500))
+      .raydiumSwap(new anchor.BN(1 * anchor.web3.LAMPORTS_PER_SOL), new BN(500))
       .accountsPartial({
         cpSwapProgram: CPMM_PROGRAM_ID,
         user: wallet.publicKey,
@@ -1058,7 +1052,7 @@ describe("bonding-curve", async () => {
         new anchor.BN(Math.pow(10, 6))
       ), // 1 million tokens
       description: "A small target bonding curve for testing",
-      treasuryAddress: Keypair.generate().publicKey,
+      treasuryAddress: anchor.web3.Keypair.generate().publicKey,
       authorityAddress: wallet.publicKey,
       twitterHandle: "@smalltarget",
       discordLink: "https://discord.gg/smalltarget",
@@ -1228,7 +1222,7 @@ function getOrderedMintAccounts(
     };
   }
 }
-async function getSolanaClock(conn: Connection): Promise<Number> {
+async function getSolanaClock(conn: anchor.web3.Connection): Promise<Number> {
   const clock = anchor.web3.SYSVAR_CLOCK_PUBKEY;
   const clockInfo = await conn.getAccountInfo(clock);
   if (!clockInfo) {

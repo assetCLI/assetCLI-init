@@ -194,13 +194,10 @@ export class BondingCurveService {
   async initialize(params: GlobalInitParams): Promise<ServiceResponse<string>> {
     try {
       const globalPda = this.findGlobalPda();
-      const scaledMigrateFeeAmount = params.migrateFeeAmount
-        ? params.migrateFeeAmount.mul(new BN(LAMPORTS_PER_SOL))
-        : null;
       const tx = await this.program.methods
         .initialize({
           feeReceiver: params.feeReceiver ?? this.provider.wallet.publicKey,
-          migrateFeeAmount: scaledMigrateFeeAmount,
+          migrateFeeAmount: params.migrateFeeAmount ?? new BN(0),
           status: params.status ?? { running: {} },
         })
         .accountsPartial({
@@ -267,14 +264,6 @@ export class BondingCurveService {
           [uri] = await umi.uploader.upload([file]);
         }
       }
-
-      const scaledTokenTotalSupply = params.tokenTotalSupply.mul(
-        new BN(10).pow(new BN(params.tokenDecimals))
-      );
-      const scaledBaseRaiseTarget = params.baseRaiseTarget.mul(
-        new BN(10).pow(new BN(params.baseDecimals))
-      );
-
       const vaultTokenAccount = this.getAssociatedTokenAddress(
         tokenMint,
         vault
@@ -284,10 +273,10 @@ export class BondingCurveService {
           name: params.name,
           symbol: params.symbol,
           description: params.description,
-          baseRaiseTarget: scaledBaseRaiseTarget,
+          baseRaiseTarget: params.baseRaiseTarget,
           tokenDecimals: params.tokenDecimals,
           baseDecimals: params.baseDecimals,
-          tokenTotalSupply: scaledTokenTotalSupply ?? null,
+          tokenTotalSupply: params.tokenTotalSupply ?? null,
           twitterHandle: params.twitterHandle ?? null,
           discordLink: params.discordLink ?? null,
           websiteUrl: params.websiteUrl ?? null,
@@ -377,21 +366,6 @@ export class BondingCurveService {
       });
       let scaledAmountIn = params.amount;
       let scaledMinOutAmount = params.minOutAmount;
-      if (params.baseIn) {
-        scaledAmountIn = scaledAmountIn.mul(
-          new BN(10).pow(new BN(curveState!.tokenDecimals))
-        );
-        scaledMinOutAmount = scaledMinOutAmount.mul(
-          new BN(10).pow(new BN(curveState!.baseDecimals))
-        );
-      } else {
-        scaledAmountIn = scaledAmountIn.mul(
-          new BN(10).pow(new BN(curveState!.baseDecimals))
-        );
-        scaledMinOutAmount = scaledMinOutAmount.mul(
-          new BN(10).pow(new BN(curveState!.tokenDecimals))
-        );
-      }
 
       const swapIx = await this.program.methods
         .swap({

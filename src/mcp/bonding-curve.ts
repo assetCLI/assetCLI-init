@@ -1,4 +1,4 @@
-import { PublicKey } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
 import { useMcpContext, mcpError, mcpText } from "../utils/mcp-hooks";
 import { BondingCurveService } from "../services/bonding-curve-service";
@@ -173,7 +173,7 @@ export const bondingCurveTools = [
       const initParams = {
         feeReceiver: feeReceiver ? new PublicKey(feeReceiver) : undefined,
         migrateFeeAmount: migrateFeeAmount
-          ? new BN(migrateFeeAmount)
+          ? new BN(Math.round(migrateFeeAmount * LAMPORTS_PER_SOL))
           : undefined,
         status: { running: {} },
       };
@@ -401,13 +401,17 @@ export const bondingCurveTools = [
         name,
         symbol,
         buff: imageBuffer,
-        baseRaiseTarget: new BN(baseRaiseTarget),
+        baseRaiseTarget: new BN(
+          Math.round(baseRaiseTarget * Math.pow(10, baseDecimals))
+        ),
         description,
         treasuryAddress: authorityAddressFromMultisig ?? wallet.publicKey,
         authorityAddress: authorityAddressFromMultisig ?? wallet.publicKey,
         tokenDecimals,
         baseDecimals,
-        tokenTotalSupply: new BN(tokenTotalSupply),
+        tokenTotalSupply: new BN(
+          Math.round(tokenTotalSupply * Math.pow(10, tokenDecimals))
+        ),
         twitterHandle: twitterHandle ?? null,
         discordLink: discordLink ?? null,
         websiteUrl: websiteUrl ?? null,
@@ -520,8 +524,28 @@ export const bondingCurveTools = [
 
       const swapParams = {
         baseIn: !isBuy,
-        amount: new BN(amount),
-        minOutAmount: new BN(minOutAmount),
+        amount: new BN(
+          Math.round(
+            amount *
+              Math.pow(
+                10,
+                isBuy
+                  ? curveResult.data.baseDecimals
+                  : curveResult.data.tokenDecimals
+              )
+          )
+        ),
+        minOutAmount: new BN(
+          Math.round(
+            minOutAmount *
+              Math.pow(
+                10,
+                isBuy
+                  ? curveResult.data.tokenDecimals
+                  : curveResult.data.baseDecimals
+              )
+          )
+        ),
       };
 
       const swapResult = await service.swap(mint, swapParams);
@@ -553,19 +577,36 @@ export const bondingCurveTools = [
             curveResult.data.baseDecimals
           )} ${baseTokenSymbol}`;
 
+      // Auto-migrate if curve is complete
+      let migrationResult = null;
+      if (isCurveComplete) {
+        migrationResult = await service.migrateToRaydiumAndClaimLpTokens(mint);
+      }
+
       return mcpText(
         `✅ Swap completed successfully!\n\n` +
           `🪙 ${isBuy ? "Bought" : "Sold"} tokens: ${formattedAmount}\n` +
           `🔗 Transaction: ${swapResult.data}\n\n` +
           (isCurveComplete
-            ? `🎉 Congratulations! The bonding curve is now complete.\n` +
-              `   You can now migrate to Raydium using 'migrateToRaydium'.\n\n`
+            ? migrationResult && migrationResult.success
+              ? `🎉 Bonding curve completed! Automatically migrated to Raydium.\n` +
+                `   LP tokens have been claimed to your wallet.\n` +
+                `   Migration transaction: ${migrationResult.data}\n\n`
+              : `🎉 Bonding curve is now complete!\n` +
+                `   Migration to Raydium ${
+                  migrationResult
+                    ? "failed: " + migrationResult.error?.message
+                    : "was not attempted"
+                }.\n` +
+                `   Please use 'migrateToRaydium' manually.\n\n`
             : `📊 The bonding curve is still active.\n` +
               `   You can check the current status with 'getBondingCurveDetails'.\n\n`) +
           `What's next?\n` +
           `• View your token balance with 'showWallet'\n` +
           `• Check curve details with 'getBondingCurveDetails'\n` +
-          (isBuy
+          (isCurveComplete
+            ? `• Your token is now tradeable on Raydium`
+            : isBuy
             ? `• You can sell tokens later with 'swap' (isBuy: false)`
             : `• You can buy more tokens with 'swap' (isBuy: true)`)
       );
@@ -696,7 +737,6 @@ export const bondingCurveTools = [
       );
     },
   },
-  // Update the simulateSwap function
   {
     name: "simulateSwap",
     description: "Simulate a token swap without executing the transaction",

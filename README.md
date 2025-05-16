@@ -16,6 +16,15 @@ assetCLI is a comprehensive AI-native platform for token launches, liquidity man
 ## 🌟 Features
 
 - **Token Launch**: Create tokens with bonding curves for fair price discovery
+- **Flexible Base Asset**: Use any SPL_TOKEN or TOKEN_22 standard token as the base for your bonding curve, not just native SOL
+- **Advanced Bonding Curve Math**: Utilizes pump science and a linear bonding curve (X=Y*Z, X constant) for AMM price discovery
+- **InterfaceAccount Support**: Full compatibility with both SPL_TOKEN and TOKEN_22 standards for mints and token accounts
+- **Raydium Integration**: Raydium CPI for CPMM pool creation and locking, with both mainnet and devnet builds (devnet via feature flag)
+- **Metaplex Metadata**: On-chain Metaplex program integration for project token metadata
+- **SystemAccount Signer PDA**: Bonding curve operations use a SystemAccount signer PDA for secure, programmatic actions
+- **Ordered Pair Validation**: CPMM pool creation checks ordered pairs on both client and contract sides
+- **Custom Authority & Vault**: Use authority_address and vault_address for asset transfers, enabling use beyond Squads, Realms DAO, etc.
+- **Localnet Scripts**: Scripts for local development, including cloning bpf-upgradable programs and system accounts for CPIs
 - **Squads Multisig Integration**: Secure team treasury management
 - **Automatic Raydium Migration**: Seamless transition to DEX when bonding curves complete
 - **Perana/Numeraire Integration**: Access to stable pool swaps and liquidity provisioning
@@ -163,7 +172,8 @@ assetCLI/
 │   │   ├── bonding-curve.ts  # Bonding curve MCP tools
 │   │   ├── config-and-wallet.ts # Wallet configuration tools
 │   │   ├── multisig.ts       # Multisig MCP tools
-│   │   └── perana-tools.ts   # Perana integration tools
+│   │   ├── perana-tools.ts   # Perana integration tools
+│   │   └── agent-tools.ts    # Solana-agent-kit DeFi tools
 │   ├── services/             # Core business logic
 │   │   ├── bonding-curve-service.ts  # Bonding curve implementation
 │   │   ├── multisig-service.ts       # Squads multisig implementation
@@ -180,10 +190,16 @@ assetCLI/
 
 The application integrates multiple key components:
 
-1. **Bonding Curve Protocol**: For token launches with automatic liquidity and price discovery
-2. **Squads Multisig**: For multi-signature transaction approval and team treasury management
-3. **Perana/Numeraire**: For stable pool operations and liquidity management
-4. **[Model Context Protocol (MCP)](https://www.claudemcp.com/)**: For AI-assisted interactions and operations
+1. **Bonding Curve Protocol**: For token launches with automatic liquidity and price discovery, supporting both SPL_TOKEN and TOKEN_22 standards
+2. **Raydium Integration**: Raydium CPI for CPMM pool creation and locking, with ordered pair validation
+3. **Metaplex Metadata**: On-chain metadata for project tokens
+4. **SystemAccount Signer PDA**: Secure, programmatic operations for the bonding curve
+5. **Custom Authority & Vault**: Flexible asset management for advanced use cases
+6. **Squads Multisig**: For multi-signature transaction approval and team treasury management
+7. **Perana/Numeraire**: For stable pool operations and liquidity management
+8. **[Model Context Protocol (MCP)](https://www.claudemcp.com/)**: For AI-assisted interactions and operations
+9. **Solana-Agent-Kit**: Extended DeFi and on-chain operations via MCP
+10. **Localnet Scripts**: For local development and testing, including program and account setup
 
 Key workflows include:
 
@@ -191,6 +207,7 @@ Key workflows include:
 2. **Bonding Phase**: Users buy tokens through the bonding curve, with prices increasing as more tokens are purchased
 3. **Completion & Migration**: Once the bonding curve goal is reached, automatic migration to Raydium DEX
 4. **Stable Pool Operations**: Interact with Perana's Numeraire pools for stable asset management
+5. **DeFi Operations**: Use solana-agent-kit for advanced on-chain actions
 
 ## 🛠️ Development
 
@@ -218,6 +235,8 @@ pnpm build
 - **Bonding curve errors**: Check that you've initialized the bonding curve protocol
 - **BN conversion errors**: Ensure decimal amounts are handled properly
 - **Perana pool errors**: Verify you're using valid pool names or addresses
+- **CPMM/Curve errors**: Ensure ordered pairs and base assets are correct
+- **Localnet issues**: Use provided scripts for localnet setup and program deployment
 
 ## 📜 License
 

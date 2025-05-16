@@ -1,530 +1,532 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { ProposalService } from "../services/proposal-service";
-import { GovernanceService } from "../services/governance-service";
-import { ProposalV2 } from "governance-idl-sdk";
-import { useMcpContext } from "../utils/mcp-hooks";
+// Deprecated: This file is no longer used. This tool has been removed from the CLI.
 
-export function registerProposalTools(server: McpServer) {
-  server.tool(
-    "transferProposal",
-    "Create a proposal to transfer SOL or tokens from the DAO",
-    {
-      name: z.string().optional().default("Asset Transfer"),
-      description: z.string().optional().default("Transfer assets from DAO"),
-      amount: z.number(),
-      mint: z.string().optional(),
-      recipient: z.string(),
-    },
-    async ({ name, description, amount, mint, recipient }) => {
-      try {
-        const context = await useMcpContext({
-          requireWallet: true,
-          requireDao: true,
-        });
+// import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+// import { z } from "zod";
+// import { PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js";
+// import { ProposalService } from "../services/proposal-service";
+// import { GovernanceService } from "../services/governance-service";
+// import { ProposalV2 } from "governance-idl-sdk";
+// import { useMcpContext } from "../utils/mcp-hooks";
 
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+// export function registerProposalTools(server: McpServer) {
+//   server.tool(
+//     "transferProposal",
+//     "Create a proposal to transfer SOL or tokens from the DAO",
+//     {
+//       name: z.string().optional().default("Asset Transfer"),
+//       description: z.string().optional().default("Transfer assets from DAO"),
+//       amount: z.number(),
+//       mint: z.string().optional(),
+//       recipient: z.string(),
+//     },
+//     async ({ name, description, amount, mint, recipient }) => {
+//       try {
+//         const context = await useMcpContext({
+//           requireWallet: true,
+//           requireDao: true,
+//         });
 
-        const { connection, keypair, realmAddress } = context;
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        // Parse recipient
-        let recipientAddress: PublicKey;
-        try {
-          recipientAddress = new PublicKey(recipient);
-        } catch (e) {
-          return {
-            content: [{ type: "text", text: "Invalid recipient address." }],
-          };
-        }
+//         const { connection, keypair, realmAddress } = context;
 
-        // Validate amount
-        if (isNaN(amount) || amount <= 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Invalid amount. Please provide a positive number.",
-              },
-            ],
-          };
-        }
+//         // Parse recipient
+//         let recipientAddress: PublicKey;
+//         try {
+//           recipientAddress = new PublicKey(recipient);
+//         } catch (e) {
+//           return {
+//             content: [{ type: "text", text: "Invalid recipient address." }],
+//           };
+//         }
 
-        // Get DAO type (integrated or standard)
-        const realmInfoRes = await GovernanceService.getRealmInfo(
-          connection,
-          realmAddress!
-        );
+//         // Validate amount
+//         if (isNaN(amount) || amount <= 0) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: "Invalid amount. Please provide a positive number.",
+//               },
+//             ],
+//           };
+//         }
 
-        if (!realmInfoRes.success || !realmInfoRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Get DAO type (integrated or standard)
+//         const realmInfoRes = await GovernanceService.getRealmInfo(
+//           connection,
+//           realmAddress!
+//         );
 
-        const realmInfo = realmInfoRes.data;
-        const isIntegrated = realmInfo.isIntegrated;
+//         if (!realmInfoRes.success || !realmInfoRes.data) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        // Check balance of the source account
-        let sourceAddress: PublicKey;
-        let sourceBalance: number;
+//         const realmInfo = realmInfoRes.data;
+//         const isIntegrated = realmInfo.isIntegrated;
 
-        if (isIntegrated && realmInfo.vaultAddress) {
-          sourceAddress = realmInfo.vaultAddress;
-          sourceBalance = await connection.getBalance(sourceAddress);
-        } else {
-          sourceAddress = realmInfo.treasuryAddress;
-          sourceBalance = await connection.getBalance(sourceAddress);
-        }
+//         // Check balance of the source account
+//         let sourceAddress: PublicKey;
+//         let sourceBalance: number;
 
-        if (!mint && sourceBalance < amount * LAMPORTS_PER_SOL) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Insufficient funds in treasury/vault to execute this transfer.",
-              },
-            ],
-          };
-        }
+//         if (isIntegrated && realmInfo.vaultAddress) {
+//           sourceAddress = realmInfo.vaultAddress;
+//           sourceBalance = await connection.getBalance(sourceAddress);
+//         } else {
+//           sourceAddress = realmInfo.treasuryAddress;
+//           sourceBalance = await connection.getBalance(sourceAddress);
+//         }
 
-        // Build instructions based on DAO type and transfer type (SOL or Token)
-        let instructionsRes;
-        let proposalAddressRes;
+//         if (!mint && sourceBalance < amount * LAMPORTS_PER_SOL) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: "Insufficient funds in treasury/vault to execute this transfer.",
+//               },
+//             ],
+//           };
+//         }
 
-        if (mint) {
-          // Token transfer
-          const tokenMint = new PublicKey(mint);
+//         // Build instructions based on DAO type and transfer type (SOL or Token)
+//         let instructionsRes;
+//         let proposalAddressRes;
 
-          if (isIntegrated && realmInfo.multisigAddress) {
-            instructionsRes =
-              await ProposalService.getSquadsMultisigTokenTransferInstruction(
-                connection,
-                realmInfo.multisigAddress,
-                tokenMint,
-                amount,
-                recipientAddress
-              );
+//         if (mint) {
+//           // Token transfer
+//           const tokenMint = new PublicKey(mint);
 
-            if (!instructionsRes.success || !instructionsRes.data) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Failed to create transfer instruction: ${instructionsRes.error?.message}`,
-                  },
-                ],
-              };
-            }
+//           if (isIntegrated && realmInfo.multisigAddress) {
+//             instructionsRes =
+//               await ProposalService.getSquadsMultisigTokenTransferInstruction(
+//                 connection,
+//                 realmInfo.multisigAddress,
+//                 tokenMint,
+//                 amount,
+//                 recipientAddress
+//               );
 
-            proposalAddressRes =
-              await ProposalService.createIntegratedAssetTransferProposal(
-                connection,
-                keypair,
-                realmAddress!,
-                name,
-                description,
-                instructionsRes.data
-              );
-          } else {
-            instructionsRes = await ProposalService.getTokenTransferInstruction(
-              connection,
-              realmAddress!,
-              tokenMint,
-              amount,
-              recipientAddress
-            );
+//             if (!instructionsRes.success || !instructionsRes.data) {
+//               return {
+//                 content: [
+//                   {
+//                     type: "text",
+//                     text: `Failed to create transfer instruction: ${instructionsRes.error?.message}`,
+//                   },
+//                 ],
+//               };
+//             }
 
-            if (!instructionsRes.success || !instructionsRes.data) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Failed to create transfer instruction: ${instructionsRes.error?.message}`,
-                  },
-                ],
-              };
-            }
+//             proposalAddressRes =
+//               await ProposalService.createIntegratedAssetTransferProposal(
+//                 connection,
+//                 keypair,
+//                 realmAddress!,
+//                 name,
+//                 description,
+//                 instructionsRes.data
+//               );
+//           } else {
+//             instructionsRes = await ProposalService.getTokenTransferInstruction(
+//               connection,
+//               realmAddress!,
+//               tokenMint,
+//               amount,
+//               recipientAddress
+//             );
 
-            proposalAddressRes = await ProposalService.createProposal(
-              connection,
-              keypair,
-              realmAddress!,
-              name,
-              description,
-              instructionsRes.data
-            );
-          }
-        } else {
-          // SOL transfer
-          if (isIntegrated && realmInfo.multisigAddress) {
-            // For integrated DAO, create a multisig transfer
-            const transferIxRes =
-              await ProposalService.getSquadsMultisigSolTransferInstruction(
-                connection,
-                realmInfo.multisigAddress,
-                amount,
-                recipientAddress
-              );
+//             if (!instructionsRes.success || !instructionsRes.data) {
+//               return {
+//                 content: [
+//                   {
+//                     type: "text",
+//                     text: `Failed to create transfer instruction: ${instructionsRes.error?.message}`,
+//                   },
+//                 ],
+//               };
+//             }
 
-            if (!transferIxRes.success || !transferIxRes.data) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Failed to create transfer instruction: ${transferIxRes.error?.message}`,
-                  },
-                ],
-              };
-            }
+//             proposalAddressRes = await ProposalService.createProposal(
+//               connection,
+//               keypair,
+//               realmAddress!,
+//               name,
+//               description,
+//               instructionsRes.data
+//             );
+//           }
+//         } else {
+//           // SOL transfer
+//           if (isIntegrated && realmInfo.multisigAddress) {
+//             // For integrated DAO, create a multisig transfer
+//             const transferIxRes =
+//               await ProposalService.getSquadsMultisigSolTransferInstruction(
+//                 connection,
+//                 realmInfo.multisigAddress,
+//                 amount,
+//                 recipientAddress
+//               );
 
-            proposalAddressRes =
-              await ProposalService.createIntegratedAssetTransferProposal(
-                connection,
-                keypair,
-                realmAddress!,
-                name,
-                description,
-                [transferIxRes.data]
-              );
-          } else {
-            // For standard DAO, create a treasury transfer
-            const transferIxRes =
-              await ProposalService.getSolTransferInstruction(
-                connection,
-                realmAddress!,
-                amount,
-                recipientAddress
-              );
+//             if (!transferIxRes.success || !transferIxRes.data) {
+//               return {
+//                 content: [
+//                   {
+//                     type: "text",
+//                     text: `Failed to create transfer instruction: ${transferIxRes.error?.message}`,
+//                   },
+//                 ],
+//               };
+//             }
 
-            if (!transferIxRes.success || !transferIxRes.data) {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Failed to create transfer instruction: ${transferIxRes.error?.message}`,
-                  },
-                ],
-              };
-            }
+//             proposalAddressRes =
+//               await ProposalService.createIntegratedAssetTransferProposal(
+//                 connection,
+//                 keypair,
+//                 realmAddress!,
+//                 name,
+//                 description,
+//                 [transferIxRes.data]
+//               );
+//           } else {
+//             // For standard DAO, create a treasury transfer
+//             const transferIxRes =
+//               await ProposalService.getSolTransferInstruction(
+//                 connection,
+//                 realmAddress!,
+//                 amount,
+//                 recipientAddress
+//               );
 
-            proposalAddressRes = await ProposalService.createProposal(
-              connection,
-              keypair,
-              realmAddress!,
-              name,
-              description,
-              [transferIxRes.data]
-            );
-          }
-        }
+//             if (!transferIxRes.success || !transferIxRes.data) {
+//               return {
+//                 content: [
+//                   {
+//                     type: "text",
+//                     text: `Failed to create transfer instruction: ${transferIxRes.error?.message}`,
+//                   },
+//                 ],
+//               };
+//             }
 
-        if (!proposalAddressRes.success || !proposalAddressRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to create proposal: ${proposalAddressRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//             proposalAddressRes = await ProposalService.createProposal(
+//               connection,
+//               keypair,
+//               realmAddress!,
+//               name,
+//               description,
+//               [transferIxRes.data]
+//             );
+//           }
+//         }
 
-        const result = {
-          success: true,
-          proposalAddress: proposalAddressRes.data.toBase58(),
-          name,
-          description,
-          transferType: mint ? "token" : "sol",
-          amount,
-          recipient: recipientAddress.toBase58(),
-          mint: mint ? mint : null,
-        };
+//         if (!proposalAddressRes.success || !proposalAddressRes.data) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to create proposal: ${proposalAddressRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: "text", text: `Failed to create proposal: ${error}` },
-          ],
-        };
-      }
-    }
-  );
+//         const result = {
+//           success: true,
+//           proposalAddress: proposalAddressRes.data.toBase58(),
+//           name,
+//           description,
+//           transferType: mint ? "token" : "sol",
+//           amount,
+//           recipient: recipientAddress.toBase58(),
+//           mint: mint ? mint : null,
+//         };
 
-  server.tool(
-    "voteProposal",
-    "Vote on an existing proposal",
-    {
-      proposal: z.string(),
-      approve: z.boolean().optional().default(true),
-    },
-    async ({ proposal, approve }) => {
-      try {
-        const context = await useMcpContext({
-          requireWallet: true,
-          requireDao: true,
-        });
+//         return {
+//           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [
+//             { type: "text", text: `Failed to create proposal: ${error}` },
+//           ],
+//         };
+//       }
+//     }
+//   );
 
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+//   server.tool(
+//     "voteProposal",
+//     "Vote on an existing proposal",
+//     {
+//       proposal: z.string(),
+//       approve: z.boolean().optional().default(true),
+//     },
+//     async ({ proposal, approve }) => {
+//       try {
+//         const context = await useMcpContext({
+//           requireWallet: true,
+//           requireDao: true,
+//         });
 
-        const { connection, keypair, realmAddress } = context;
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        // Parse proposal address
-        let proposalAddress: PublicKey;
-        try {
-          proposalAddress = new PublicKey(proposal);
-        } catch (e) {
-          return {
-            content: [{ type: "text", text: "Invalid proposal address." }],
-          };
-        }
+//         const { connection, keypair, realmAddress } = context;
 
-        // Cast vote
-        const voteRes = await ProposalService.castVote(
-          connection,
-          keypair,
-          realmAddress!,
-          proposalAddress,
-          approve
-        );
+//         // Parse proposal address
+//         let proposalAddress: PublicKey;
+//         try {
+//           proposalAddress = new PublicKey(proposal);
+//         } catch (e) {
+//           return {
+//             content: [{ type: "text", text: "Invalid proposal address." }],
+//           };
+//         }
 
-        if (!voteRes.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to cast vote: ${voteRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Cast vote
+//         const voteRes = await ProposalService.castVote(
+//           connection,
+//           keypair,
+//           realmAddress!,
+//           proposalAddress,
+//           approve
+//         );
 
-        const result = {
-          success: true,
-          proposal: proposalAddress.toBase58(),
-          vote: approve ? "approve" : "reject",
-          transaction: voteRes.data,
-        };
+//         if (!voteRes.success) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to cast vote: ${voteRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: "text", text: `Failed to vote on proposal: ${error}` },
-          ],
-        };
-      }
-    }
-  );
+//         const result = {
+//           success: true,
+//           proposal: proposalAddress.toBase58(),
+//           vote: approve ? "approve" : "reject",
+//           transaction: voteRes.data,
+//         };
 
-  server.tool(
-    "executeProposal",
-    "Execute an approved proposal",
-    {
-      proposal: z.string(),
-    },
-    async ({ proposal }) => {
-      try {
-        const context = await useMcpContext({ requireWallet: true });
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+//         return {
+//           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [
+//             { type: "text", text: `Failed to vote on proposal: ${error}` },
+//           ],
+//         };
+//       }
+//     }
+//   );
 
-        const { connection, keypair } = context;
+//   server.tool(
+//     "executeProposal",
+//     "Execute an approved proposal",
+//     {
+//       proposal: z.string(),
+//     },
+//     async ({ proposal }) => {
+//       try {
+//         const context = await useMcpContext({ requireWallet: true });
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        // Parse proposal address
-        let proposalAddress: PublicKey;
-        try {
-          proposalAddress = new PublicKey(proposal);
-        } catch (e) {
-          return {
-            content: [{ type: "text", text: "Invalid proposal address." }],
-          };
-        }
+//         const { connection, keypair } = context;
 
-        // Execute the proposal
-        const executeRes = await ProposalService.executeProposal(
-          connection,
-          keypair,
-          proposalAddress
-        );
+//         // Parse proposal address
+//         let proposalAddress: PublicKey;
+//         try {
+//           proposalAddress = new PublicKey(proposal);
+//         } catch (e) {
+//           return {
+//             content: [{ type: "text", text: "Invalid proposal address." }],
+//           };
+//         }
 
-        if (!executeRes.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to execute proposal: ${executeRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Execute the proposal
+//         const executeRes = await ProposalService.executeProposal(
+//           connection,
+//           keypair,
+//           proposalAddress
+//         );
 
-        const result = {
-          success: true,
-          proposal: proposalAddress.toBase58(),
-          transaction: executeRes.data,
-        };
+//         if (!executeRes.success) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to execute proposal: ${executeRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: "text", text: `Failed to execute proposal: ${error}` },
-          ],
-        };
-      }
-    }
-  );
+//         const result = {
+//           success: true,
+//           proposal: proposalAddress.toBase58(),
+//           transaction: executeRes.data,
+//         };
 
-  server.tool(
-    "listProposals",
-    "List all proposals for the current DAO",
-    {
-      showAll: z.boolean().optional().default(false),
-      limit: z.number().optional().default(10),
-    },
-    async ({ showAll, limit }) => {
-      try {
-        const context = await useMcpContext({ requireDao: true });
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+//         return {
+//           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [
+//             { type: "text", text: `Failed to execute proposal: ${error}` },
+//           ],
+//         };
+//       }
+//     }
+//   );
 
-        const { connection, realmAddress } = context;
+//   server.tool(
+//     "listProposals",
+//     "List all proposals for the current DAO",
+//     {
+//       showAll: z.boolean().optional().default(false),
+//       limit: z.number().optional().default(10),
+//     },
+//     async ({ showAll, limit }) => {
+//       try {
+//         const context = await useMcpContext({ requireDao: true });
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        // Use the method in GovernanceService to fetch proposals for this realm
-        const proposalRes = await GovernanceService.getProposalsForRealm(
-          connection,
-          realmAddress!
-        );
+//         const { connection, realmAddress } = context;
 
-        if (!proposalRes.success || !proposalRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to fetch proposals: ${proposalRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Use the method in GovernanceService to fetch proposals for this realm
+//         const proposalRes = await GovernanceService.getProposalsForRealm(
+//           connection,
+//           realmAddress!
+//         );
 
-        const proposals = proposalRes.data.proposals;
-        if (proposals.length === 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({ proposals: [] }, null, 2),
-              },
-            ],
-          };
-        }
+//         if (!proposalRes.success || !proposalRes.data) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to fetch proposals: ${proposalRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        // Filter proposals if showAll is not specified
-        const filteredProposals = showAll
-          ? proposals
-          : proposals.filter(
-              (p) =>
-                !p.state.completed && !p.state.cancelled && !p.state.defeated
-            );
+//         const proposals = proposalRes.data.proposals;
+//         if (proposals.length === 0) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: JSON.stringify({ proposals: [] }, null, 2),
+//               },
+//             ],
+//           };
+//         }
 
-        // Limit the number of proposals shown
-        const limitedProposals = filteredProposals.slice(0, limit);
+//         // Filter proposals if showAll is not specified
+//         const filteredProposals = showAll
+//           ? proposals
+//           : proposals.filter(
+//               (p) =>
+//                 !p.state.completed && !p.state.cancelled && !p.state.defeated
+//             );
 
-        // Format proposals
-        const formattedProposals = limitedProposals.map(
-          (proposal: ProposalV2, index) => {
-            const state = getProposalState(proposal);
-            return {
-              index: index + 1,
-              name: proposal.name,
-              state: state,
-              address: proposal.publicKey.toBase58(),
-              description: proposal.descriptionLink,
-            };
-          }
-        );
+//         // Limit the number of proposals shown
+//         const limitedProposals = filteredProposals.slice(0, limit);
 
-        const result = {
-          total: proposals.length,
-          filtered: filteredProposals.length,
-          showing: formattedProposals.length,
-          proposals: formattedProposals,
-        };
+//         // Format proposals
+//         const formattedProposals = limitedProposals.map(
+//           (proposal: ProposalV2, index) => {
+//             const state = getProposalState(proposal);
+//             return {
+//               index: index + 1,
+//               name: proposal.name,
+//               state: state,
+//               address: proposal.publicKey.toBase58(),
+//               description: proposal.descriptionLink,
+//             };
+//           }
+//         );
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: "text", text: `Failed to list proposals: ${error}` },
-          ],
-        };
-      }
-    }
-  );
-}
+//         const result = {
+//           total: proposals.length,
+//           filtered: filteredProposals.length,
+//           showing: formattedProposals.length,
+//           proposals: formattedProposals,
+//         };
 
-// Helper function to get the proposal state as a string
-function getProposalState(proposal: ProposalV2): string {
-  if (proposal.state.draft) {
-    return "Draft";
-  }
-  if (proposal.state.signingOff) {
-    return "SigningOff";
-  }
-  if (proposal.state.voting) {
-    return "Voting";
-  }
-  if (proposal.state.succeeded) {
-    return "Succeeded";
-  }
-  if (proposal.state.executing) {
-    return "Executing";
-  }
-  if (proposal.state.completed) {
-    return "Completed";
-  }
-  if (proposal.state.cancelled) {
-    return "Cancelled";
-  }
-  if (proposal.state.defeated) {
-    return "Defeated";
-  }
-  return "Unknown";
-}
+//         return {
+//           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [
+//             { type: "text", text: `Failed to list proposals: ${error}` },
+//           ],
+//         };
+//       }
+//     }
+//   );
+// }
+
+// // Helper function to get the proposal state as a string
+// function getProposalState(proposal: ProposalV2): string {
+//   if (proposal.state.draft) {
+//     return "Draft";
+//   }
+//   if (proposal.state.signingOff) {
+//     return "SigningOff";
+//   }
+//   if (proposal.state.voting) {
+//     return "Voting";
+//   }
+//   if (proposal.state.succeeded) {
+//     return "Succeeded";
+//   }
+//   if (proposal.state.executing) {
+//     return "Executing";
+//   }
+//   if (proposal.state.completed) {
+//     return "Completed";
+//   }
+//   if (proposal.state.cancelled) {
+//     return "Cancelled";
+//   }
+//   if (proposal.state.defeated) {
+//     return "Defeated";
+//   }
+//   return "Unknown";
+// }

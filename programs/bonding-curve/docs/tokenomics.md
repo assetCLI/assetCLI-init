@@ -137,3 +137,209 @@ assetCLI token execute-migration --burn-unsold true
 2. **LP Security**: LP tokens are locked to prevent immediate liquidity removal
 3. **Compounding Effect**: Burning unsold tokens increases the relative value of all tokens
 4. **Price Continuity**: Trading can continue without interruption through migration
+
+```javascript
+import { Connection, PublicKey } from "@solana/web3.js";
+import { Program } from "@project-serum/anchor";
+import { BN } from "bn.js";
+
+/**
+ * Client for interacting with bonding curve calculations
+ */
+export class BondingCurveClient {
+  private program: Program;
+
+  constructor(program: Program) {
+    this.program = program;
+  }
+
+  /**
+   * Fetch bonding curve state
+   */
+  async fetchBondingCurve(bondingCurvePda: PublicKey) {
+    return await this.program.account.bondingCurve.fetch(bondingCurvePda);
+  }
+
+  /**
+   * Simulate buying tokens with SOL
+   */
+  async simulateBuy(bondingCurvePda: PublicKey, solAmount: BN, slippageTolerance = 0.5) {
+    const bondingCurve = await this.fetchBondingCurve(bondingCurvePda);
+    const currentTime = Math.floor(Date.now() / 1000);
+    
+    // Check if bonding curve is active
+    if (currentTime < bondingCurve.startTime.toNumber()) {
+      throw new Error("Bonding curve has not started yet");
+    }
+    
+    // Check if complete
+    if (bondingCurve.complete) {
+      throw new Error("Bonding curve is complete");
+    }
+    
+    // Calculate tokens received using the same formula as the contract
+    const tokensReceived = this.getTokensForBuySol(bondingCurve, solAmount);
+    if (!tokensReceived) {
+      throw new Error("Failed to calculate tokens amount");
+    }
+    
+    // Calculate fee
+    const fee = this.calculateFee(bondingCurve, solAmount, currentTime);
+    
+    // Calculate price impact
+    const virtualSol = bondingCurve.virtualSolReserves.toNumber();
+    const virtualToken = bondingCurve.virtualTokenReserves.toNumber();
+    const spotPrice = virtualSol / virtualToken;
+    const executionPrice = solAmount.toNumber() / tokensReceived.toNumber();
+    const priceImpactPercent = ((executionPrice / spotPrice) - 1) * 100;
+    
+    // Apply slippage tolerance
+    const minAmountOut = tokensReceived.muln(Math.floor(1000 - slippageTolerance * 10))
+      .divn(1000);
+    
+    return {
+      expectedTokenAmount: tokensReceived,
+      minTokenAmount: minAmountOut,
+      pricePerToken: executionPrice,
+      spotPrice,
+      priceImpactPercent,
+      feeAmount: fee,
+      feePercent: (fee.toNumber() / solAmount.toNumber()) * 100,
+      remainingSupply: bondingCurve.realTokenReserves.toString(),
+      willCompletePool: tokensReceived.gte(bondingCurve.realTokenReserves),
+    };
+  }
+
+  /**
+   * Simulate selling tokens for SOL
+   */
+  async simulateSell(bondingCurvePda: PublicKey, tokenAmount: BN, slippageTolerance = 0.5) {
+    const bondingCurve = await this.fetchBondingCurve(bondingCurvePda);
+    const currentTime = Math.floor(Date.now() / 1000);
+    
+    // Similar validations as buy
+    if (currentTime < bondingCurve.startTime.toNumber()) {
+      throw new Error("Bonding curve has not started yet");
+    }
+    
+    // Calculate SOL to be received
+    const solReceived = this.getSolForSellTokens(bondingCurve, tokenAmount);
+    if (!solReceived) {
+      throw new Error("Failed to calculate SOL amount");
+    }
+    
+    // Calculate fee 
+    const fee = this.calculateFee(bondingCurve, solReceived, currentTime);
+    
+    // Calculate price impact
+    const virtualSol = bondingCurve.virtualSolReserves.toNumber();
+    const virtualToken = bondingCurve.virtualTokenReserves.toNumber();
+    const spotPrice = virtualSol / virtualToken;
+    const executionPrice = solReceived.toNumber() / tokenAmount.toNumber();
+    const priceImpactPercent = ((spotPrice / executionPrice) - 1) * 100;
+    
+    // Apply slippage tolerance
+    const minAmountOut = solReceived.sub(fee).muln(Math.floor(1000 - slippageTolerance * 10))
+      .divn(1000);
+    
+    return {
+      expectedSolAmount: solReceived.sub(fee), // After subtracting fee
+      minSolAmount: minAmountOut,
+      pricePerToken: executionPrice,
+      spotPrice,
+      priceImpactPercent,
+      feeAmount: fee,
+      feePercent: (fee.toNumber() / solReceived.toNumber()) * 100,
+    };
+  }
+
+  /**
+   * Implement the get_tokens_for_buy_sol function from the contract
+   */
+  getTokensForBuySol(bondingCurve: any, solAmount: BN): BN | null {
+    if (solAmount.eqn(0)) {
+      return null;
+    }
+    
+    try {
+      // Calculate constant k = virtual_sol * virtual_token
+      const k = bondingCurve.virtualSolReserves.mul(bondingCurve.virtualTokenReserves);
+      
+      // Calculate new virtual SOL reserves
+      const newVirtualSolReserves = bondingCurve.virtualSolReserves.add(solAmount);
+      
+      // Calculate new virtual token reserves: k / new_sol_reserves
+      const newVirtualTokenReserves = k.div(newVirtualSolReserves);
+      
+      // Calculate tokens received
+      const tokensReceived = bondingCurve.virtualTokenReserves.sub(newVirtualTokenReserves);
+      
+      return tokensReceived;
+    } catch (error) {
+      console.error("Error in token calculation:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Implement the get_sol_for_sell_tokens function from the contract
+   */
+  getSolForSellTokens(bondingCurve: any, tokenAmount: BN): BN | null {
+    if (tokenAmount.eqn(0)) {
+      return null;
+    }
+    
+    try {
+      // Calculate constant k = virtual_sol * virtual_token
+      const k = bondingCurve.virtualSolReserves.mul(bondingCurve.virtualTokenReserves);
+      
+      // Calculate new virtual token reserves
+      const newVirtualTokenReserves = bondingCurve.virtualTokenReserves.add(tokenAmount);
+      
+      // Calculate new virtual SOL reserves: k / new_token_reserves
+      const newVirtualSolReserves = k.div(newVirtualTokenReserves);
+      
+      // Calculate SOL received
+      const solReceived = bondingCurve.virtualSolReserves.sub(newVirtualSolReserves);
+      
+      return solReceived;
+    } catch (error) {
+      console.error("Error in SOL calculation:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Calculate fee based on time since curve started
+   */
+  calculateFee(bondingCurve: any, amount: BN, currentTimestamp: number): BN {
+    const startTime = bondingCurve.startTime.toNumber();
+    const timeDiffSeconds = Math.max(0, currentTimestamp - startTime);
+    const daysPassed = timeDiffSeconds / 86400; // Convert to days
+    
+    let feeBps: number;
+    
+    // Use the same fee logic as your contract
+    if (daysPassed < 3) {
+      // Phase 1: First 3 days - higher fee
+      feeBps = 2000; // 20%
+    } else if (daysPassed < 14) {
+      // Phase 2: Days 3-14 - linear decrease
+      const progress = daysPassed - 3;
+      const totalPhase = 11; // 14 - 3
+      
+      // Linear interpolation between 20% and 1%
+      feeBps = 2000 - (progress * (2000 - 100) / totalPhase);
+    } else {
+      // Phase 3: After 14 days - minimum fee
+      feeBps = 100; // 1%
+    }
+    
+    // Cap at 10% maximum
+    feeBps = Math.min(feeBps, 1000);
+    
+    // Calculate fee amount: amount * feeBps / 10000
+    return amount.muln(Math.floor(feeBps)).divn(10000);
+  }
+}
+```

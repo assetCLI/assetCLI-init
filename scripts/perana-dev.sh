@@ -1,0 +1,2 @@
+#!/bin/bash
+solana-test-validator --quiet --reset --clone-upgradeable-program NUMERUNsFCP3kuNmWZuXtm1AaQCPj9uw6Guv2Ekoi5P --account EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v docs/usdc-mock.json --clone BenJy1n3WTx9mTjEvy63e8Q1j4RqUc6E4VBMz3ir4Wo6 Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB 2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo 2w4A1eGyjRutakyFdmVyBiLPf98qKxNTC2LpuwhaCruZ --url mainnet-beta &

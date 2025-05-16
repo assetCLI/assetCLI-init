@@ -1,10 +1,6 @@
 import { Connection, Commitment, Cluster } from "@solana/web3.js";
 import { ConfigService } from "./config-service";
-import {
-  ENDPOINT_MAP,
-  DEFAULT_CLUSTER,
-  ENDPOINT_LOCALHOST,
-} from "../utils/constants";
+import { DEFAULT_NETWORK } from "../utils/constants";
 import { ServiceResponse } from "../types/service-types";
 
 export class ConnectionService {
@@ -17,11 +13,11 @@ export class ConnectionService {
       if (
         !configResponse.success ||
         !configResponse.data ||
-        !configResponse.data.dao?.endpoint
+        !configResponse.data.network?.rpcUrl
       ) {
         // Fall back to default connection
         const connection = new Connection(
-          ENDPOINT_MAP[DEFAULT_CLUSTER],
+          DEFAULT_NETWORK.rpcUrl,
           commitment
         );
         return {
@@ -35,7 +31,7 @@ export class ConnectionService {
 
       // Create the connection
       const connection = new Connection(
-        configResponse.data.dao.endpoint,
+        configResponse.data.network.rpcUrl,
         commitment
       );
 
@@ -46,14 +42,14 @@ export class ConnectionService {
       } catch (error) {
         // Fallback to default connection if connection fails
         const fallbackConnection = new Connection(
-          ENDPOINT_MAP[DEFAULT_CLUSTER],
+          DEFAULT_NETWORK.rpcUrl,
           commitment
         );
         return {
           success: true,
           data: fallbackConnection,
           error: {
-            message: `Connection to ${configResponse.data.dao.endpoint} failed, using default`,
+            message: `Connection to ${configResponse.data.network.rpcUrl} failed, using default`,
             details: error,
           },
         };
@@ -62,7 +58,7 @@ export class ConnectionService {
       // In case of any other errors, return a fallback connection
       return {
         success: true,
-        data: new Connection(ENDPOINT_MAP[DEFAULT_CLUSTER], commitment),
+        data: new Connection(DEFAULT_NETWORK.rpcUrl, commitment),
         error: {
           message: "Failed to create connection from config, using default",
           details: error,
@@ -71,30 +67,4 @@ export class ConnectionService {
     }
   }
 
-  static async getCluster(): Promise<ServiceResponse<string>> {
-    try {
-      const configResponse = await ConfigService.getConfig();
-      if (!configResponse.success || !configResponse.data?.dao?.endpoint) {
-        return {
-          success: true,
-          data: DEFAULT_CLUSTER,
-          error: { message: "Endpoint not found, default cluster used" },
-        };
-      }
-      const endpoint = configResponse.data.dao.endpoint;
-      let clusterName = DEFAULT_CLUSTER;
-      for (const [cluster, url] of Object.entries(ENDPOINT_MAP)) {
-        if (url === endpoint) {
-          clusterName = cluster as Cluster;
-          break;
-        }
-      }
-      return { success: true, data: clusterName };
-    } catch (error) {
-      return {
-        success: false,
-        error: { message: "Failed to retrieve cluster information", details: error },
-      };
-    }
-  }
 }

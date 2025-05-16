@@ -1,625 +1,627 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { ConfigService } from "../services/config-service";
-import { PublicKey } from "@solana/web3.js";
-import { GovernanceService } from "../services/governance-service";
-import { useMcpContext } from "../utils/mcp-hooks";
+// Deprecated: This tool is no longer used and will be removed in the future.
 
-export function registerDaoTools(server: McpServer) {
-  server.tool(
-    "createDao",
-    "Used to create a DAO either an integrated Multisig DAO or a standard multisig DAO",
-    {
-      integrated: z.boolean(),
-      name: z.string(),
-      members: z.array(z.string()),
-      threshold: z.number(),
-    },
-    async ({ integrated, name, members, threshold }) => {
-      try {
-        // Get context with wallet and connection
-        const context = await useMcpContext({ requireWallet: true });
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+// import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+// import { z } from "zod";
+// import { ConfigService } from "../services/config-service";
+// import { PublicKey } from "@solana/web3.js";
+// import { GovernanceService } from "../services/governance-service";
+// import { useMcpContext } from "../utils/mcp-hooks";
 
-        const { connection, keypair } = context;
-        const membersPubkeys: PublicKey[] = [keypair.publicKey];
+// export function registerDaoTools(server: McpServer) {
+//   server.tool(
+//     "createDao",
+//     "Used to create a DAO either an integrated Multisig DAO or a standard multisig DAO",
+//     {
+//       integrated: z.boolean(),
+//       name: z.string(),
+//       members: z.array(z.string()),
+//       threshold: z.number(),
+//     },
+//     async ({ integrated, name, members, threshold }) => {
+//       try {
+//         // Get context with wallet and connection
+//         const context = await useMcpContext({ requireWallet: true });
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        for (const member of members) {
-          try {
-            if (member !== keypair.publicKey.toBase58())
-              membersPubkeys.push(new PublicKey(member));
-          } catch (e) {
-            // Do nothing
-          }
-        }
+//         const { connection, keypair } = context;
+//         const membersPubkeys: PublicKey[] = [keypair.publicKey];
 
-        if (membersPubkeys.length < threshold) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Threshold should be less than or equal to number of members",
-              },
-            ],
-          };
-        }
+//         for (const member of members) {
+//           try {
+//             if (member !== keypair.publicKey.toBase58())
+//               membersPubkeys.push(new PublicKey(member));
+//           } catch (e) {
+//             // Do nothing
+//           }
+//         }
 
-        // Use different initialization functions based on integration mode
-        let daoResult;
-        if (integrated) {
-          // Use integrated DAO creation
-          daoResult = await GovernanceService.initializeIntegratedDAO(
-            connection,
-            keypair,
-            name,
-            membersPubkeys,
-            threshold
-          );
-        } else {
-          daoResult = await GovernanceService.initializeDAO(
-            connection,
-            keypair,
-            name,
-            membersPubkeys,
-            threshold
-          );
-        }
+//         if (membersPubkeys.length < threshold) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: "Threshold should be less than or equal to number of members",
+//               },
+//             ],
+//           };
+//         }
 
-        if (!daoResult.success || !daoResult.data) {
-          return {
-            content: [
-              { type: "text", text: JSON.stringify(daoResult.error, null) },
-            ],
-          };
-        }
+//         // Use different initialization functions based on integration mode
+//         let daoResult;
+//         if (integrated) {
+//           // Use integrated DAO creation
+//           daoResult = await GovernanceService.initializeIntegratedDAO(
+//             connection,
+//             keypair,
+//             name,
+//             membersPubkeys,
+//             threshold
+//           );
+//         } else {
+//           daoResult = await GovernanceService.initializeDAO(
+//             connection,
+//             keypair,
+//             name,
+//             membersPubkeys,
+//             threshold
+//           );
+//         }
 
-        // Store the realm address in config
-        const configResult = await ConfigService.setActiveRealm(
-          daoResult.data.realmAddress.toBase58()
-        );
+//         if (!daoResult.success || !daoResult.data) {
+//           return {
+//             content: [
+//               { type: "text", text: JSON.stringify(daoResult.error, null) },
+//             ],
+//           };
+//         }
 
-        if (!configResult.success) {
-          return {
-            content: [
-              { type: "text", text: JSON.stringify(configResult.error, null) },
-            ],
-          };
-        }
+//         // Store the realm address in config
+//         const configResult = await ConfigService.setActiveRealm(
+//           daoResult.data.realmAddress.toBase58()
+//         );
 
-        // Format response based on DAO type
-        let result;
-        if (integrated) {
-          result = {
-            success: true,
-            dao: {
-              realmAddress: daoResult.data.realmAddress.toBase58(),
-              governanceAddress: daoResult.data.governanceAddress.toBase58(),
-              treasuryAddress: daoResult.data.treasuryAddress.toBase58(),
-              communityMint: daoResult.data.communityMint.toBase58(),
-              councilMint: daoResult.data.councilMint.toBase58(),
-              //@ts-ignore
-              transaction: daoResult.data.daoTransaction,
-            },
-            squadMultisig: {
-              //@ts-ignore
-              multisigAddress: daoResult.data.multisigAddress.toBase58(),
-              //@ts-ignore
-              transaction: daoResult.data.squadsTransaction,
-            },
-          };
-        } else {
-          result = {
-            success: true,
-            dao: {
-              realmAddress: daoResult.data.realmAddress.toBase58(),
-              governanceAddress: daoResult.data.governanceAddress.toBase58(),
-              treasuryAddress: daoResult.data.treasuryAddress.toBase58(),
-              communityMint: daoResult.data.communityMint.toBase58(),
-              councilMint: daoResult.data.councilMint.toBase58(),
-              //@ts-ignore
-              transaction: daoResult.data.transactionSignature,
-            },
-            squadMultisig: null,
-          };
-        }
+//         if (!configResult.success) {
+//           return {
+//             content: [
+//               { type: "text", text: JSON.stringify(configResult.error, null) },
+//             ],
+//           };
+//         }
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: `Error creating DAO: ${error}` }],
-        };
-      }
-    }
-  );
+//         // Format response based on DAO type
+//         let result;
+//         if (integrated) {
+//           result = {
+//             success: true,
+//             dao: {
+//               realmAddress: daoResult.data.realmAddress.toBase58(),
+//               governanceAddress: daoResult.data.governanceAddress.toBase58(),
+//               treasuryAddress: daoResult.data.treasuryAddress.toBase58(),
+//               communityMint: daoResult.data.communityMint.toBase58(),
+//               councilMint: daoResult.data.councilMint.toBase58(),
+//               //@ts-ignore
+//               transaction: daoResult.data.daoTransaction,
+//             },
+//             squadMultisig: {
+//               //@ts-ignore
+//               multisigAddress: daoResult.data.multisigAddress.toBase58(),
+//               //@ts-ignore
+//               transaction: daoResult.data.squadsTransaction,
+//             },
+//           };
+//         } else {
+//           result = {
+//             success: true,
+//             dao: {
+//               realmAddress: daoResult.data.realmAddress.toBase58(),
+//               governanceAddress: daoResult.data.governanceAddress.toBase58(),
+//               treasuryAddress: daoResult.data.treasuryAddress.toBase58(),
+//               communityMint: daoResult.data.communityMint.toBase58(),
+//               councilMint: daoResult.data.councilMint.toBase58(),
+//               //@ts-ignore
+//               transaction: daoResult.data.transactionSignature,
+//             },
+//             squadMultisig: null,
+//           };
+//         }
 
-  server.tool(
-    "showDao",
-    "Displays the current DAO configuration and info",
-    {},
-    async () => {
-      try {
-        const context = await useMcpContext({ requireDao: true });
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+//         return {
+//           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [{ type: "text", text: `Error creating DAO: ${error}` }],
+//         };
+//       }
+//     }
+//   );
 
-        const { connection, realmAddress } = context;
-        const realmInfoRes = await GovernanceService.getRealmInfo(
-          connection,
-          realmAddress!
-        );
+//   server.tool(
+//     "showDao",
+//     "Displays the current DAO configuration and info",
+//     {},
+//     async () => {
+//       try {
+//         const context = await useMcpContext({ requireDao: true });
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        if (!realmInfoRes.success || !realmInfoRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Failed to get realm info",
-              },
-            ],
-          };
-        }
+//         const { connection, realmAddress } = context;
+//         const realmInfoRes = await GovernanceService.getRealmInfo(
+//           connection,
+//           realmAddress!
+//         );
 
-        const realmInfo = realmInfoRes.data;
-        return {
-          content: [{ type: "text", text: JSON.stringify(realmInfo, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: `Failed to get DAO info: ${error}` }],
-        };
-      }
-    }
-  );
+//         if (!realmInfoRes.success || !realmInfoRes.data) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: "Failed to get realm info",
+//               },
+//             ],
+//           };
+//         }
 
-  server.tool(
-    "fundSolanaToDaoTreasury",
-    "Fund native Solana to the current multisig DAO treasury. This is used to fund the DAO",
-    {
-      amount: z.number(),
-    },
-    async ({ amount }) => {
-      try {
-        const context = await useMcpContext({
-          requireWallet: true,
-          requireDao: true,
-        });
+//         const realmInfo = realmInfoRes.data;
+//         return {
+//           content: [{ type: "text", text: JSON.stringify(realmInfo, null, 2) }],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [{ type: "text", text: `Failed to get DAO info: ${error}` }],
+//         };
+//       }
+//     }
+//   );
 
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+//   server.tool(
+//     "fundSolanaToDaoTreasury",
+//     "Fund native Solana to the current multisig DAO treasury. This is used to fund the DAO",
+//     {
+//       amount: z.number(),
+//     },
+//     async ({ amount }) => {
+//       try {
+//         const context = await useMcpContext({
+//           requireWallet: true,
+//           requireDao: true,
+//         });
 
-        const { connection, keypair, realmAddress } = context;
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        // Validate amount
-        if (isNaN(amount) || amount <= 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Invalid amount. Please provide a positive number.",
-              },
-            ],
-          };
-        }
+//         const { connection, keypair, realmAddress } = context;
 
-        // Get DAO info to determine where to send funds
-        const realmInfoRes = await GovernanceService.getRealmInfo(
-          connection,
-          realmAddress!
-        );
+//         // Validate amount
+//         if (isNaN(amount) || amount <= 0) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: "Invalid amount. Please provide a positive number.",
+//               },
+//             ],
+//           };
+//         }
 
-        if (!realmInfoRes.success || !realmInfoRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Get DAO info to determine where to send funds
+//         const realmInfoRes = await GovernanceService.getRealmInfo(
+//           connection,
+//           realmAddress!
+//         );
 
-        const realmInfo = realmInfoRes.data;
+//         if (!realmInfoRes.success || !realmInfoRes.data) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        // Determine target based on whether this is an integrated DAO
-        let targetAddress: PublicKey;
-        let targetType: string;
+//         const realmInfo = realmInfoRes.data;
 
-        if (realmInfo.isIntegrated && realmInfo.vaultAddress) {
-          // For integrated DAOs, fund the multisig vault
-          targetAddress = realmInfo.vaultAddress;
-          targetType = "Squads multisig vault";
-        } else {
-          // For standard DAOs, fund the treasury
-          targetAddress = realmInfo.treasuryAddress;
-          targetType = "native treasury";
-        }
+//         // Determine target based on whether this is an integrated DAO
+//         let targetAddress: PublicKey;
+//         let targetType: string;
 
-        // Fund target
-        const fundRes = await GovernanceService.fundTreasury(
-          connection,
-          keypair,
-          targetAddress,
-          amount
-        );
+//         if (realmInfo.isIntegrated && realmInfo.vaultAddress) {
+//           // For integrated DAOs, fund the multisig vault
+//           targetAddress = realmInfo.vaultAddress;
+//           targetType = "Squads multisig vault";
+//         } else {
+//           // For standard DAOs, fund the treasury
+//           targetAddress = realmInfo.treasuryAddress;
+//           targetType = "native treasury";
+//         }
 
-        if (!fundRes.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to fund: ${fundRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Fund target
+//         const fundRes = await GovernanceService.fundTreasury(
+//           connection,
+//           keypair,
+//           targetAddress,
+//           amount
+//         );
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Successfully funded ${targetType} with ${amount} SOL!\nTransaction: ${fundRes.data}`,
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: `Failed to fund: ${error}` }],
-        };
-      }
-    }
-  );
+//         if (!fundRes.success) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to fund: ${fundRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-  server.tool(
-    "useDao",
-    "Set active DAO by realm address",
-    {
-      address: z.string(),
-    },
-    async ({ address }) => {
-      try {
-        // Validate realm address first
-        let realmAddress: PublicKey;
-        try {
-          realmAddress = new PublicKey(address);
-        } catch (e) {
-          return {
-            content: [{ type: "text", text: "Invalid realm address" }],
-          };
-        }
+//         return {
+//           content: [
+//             {
+//               type: "text",
+//               text: `Successfully funded ${targetType} with ${amount} SOL!\nTransaction: ${fundRes.data}`,
+//             },
+//           ],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [{ type: "text", text: `Failed to fund: ${error}` }],
+//         };
+//       }
+//     }
+//   );
 
-        // Get connection only
-        const context = await useMcpContext({
-          requireWallet: false,
-          requireConfig: false,
-        });
+//   server.tool(
+//     "useDao",
+//     "Set active DAO by realm address",
+//     {
+//       address: z.string(),
+//     },
+//     async ({ address }) => {
+//       try {
+//         // Validate realm address first
+//         let realmAddress: PublicKey;
+//         try {
+//           realmAddress = new PublicKey(address);
+//         } catch (e) {
+//           return {
+//             content: [{ type: "text", text: "Invalid realm address" }],
+//           };
+//         }
 
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+//         // Get connection only
+//         const context = await useMcpContext({
+//           requireWallet: false,
+//           requireConfig: false,
+//         });
 
-        const { connection } = context;
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        // Get information about the realm
-        const realmInfoRes = await GovernanceService.getRealmInfo(
-          connection,
-          realmAddress
-        );
+//         const { connection } = context;
 
-        if (!realmInfoRes.success || !realmInfoRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Could not find realm at address: ${realmAddress.toBase58()}`,
-              },
-            ],
-          };
-        }
+//         // Get information about the realm
+//         const realmInfoRes = await GovernanceService.getRealmInfo(
+//           connection,
+//           realmAddress
+//         );
 
-        // Store only the realm address in config
-        const configRes = await ConfigService.setActiveRealm(
-          realmAddress.toBase58()
-        );
+//         if (!realmInfoRes.success || !realmInfoRes.data) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Could not find realm at address: ${realmAddress.toBase58()}`,
+//               },
+//             ],
+//           };
+//         }
 
-        if (!configRes.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to save realm address to config: ${configRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Store only the realm address in config
+//         const configRes = await ConfigService.setActiveRealm(
+//           realmAddress.toBase58()
+//         );
 
-        const realmInfo = realmInfoRes.data;
-        const result = {
-          address: realmAddress.toBase58(),
-          name: realmInfo.name,
-          governanceAddress: realmInfo.governanceAddress.toBase58(),
-          treasuryAddress: realmInfo.treasuryAddress.toBase58(),
-          isIntegrated: realmInfo.isIntegrated,
-          multisigAddress: realmInfo.multisigAddress?.toBase58(),
-          vaultAddress: realmInfo.vaultAddress?.toBase58(),
-        };
+//         if (!configRes.success) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to save realm address to config: ${configRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: "text", text: `Failed to set active DAO: ${error}` },
-          ],
-        };
-      }
-    }
-  );
+//         const realmInfo = realmInfoRes.data;
+//         const result = {
+//           address: realmAddress.toBase58(),
+//           name: realmInfo.name,
+//           governanceAddress: realmInfo.governanceAddress.toBase58(),
+//           treasuryAddress: realmInfo.treasuryAddress.toBase58(),
+//           isIntegrated: realmInfo.isIntegrated,
+//           multisigAddress: realmInfo.multisigAddress?.toBase58(),
+//           vaultAddress: realmInfo.vaultAddress?.toBase58(),
+//         };
 
-  server.tool(
-    "listDaos",
-    "List all DAOs where you are a member",
-    {},
-    async () => {
-      try {
-        const context = await useMcpContext({ requireWallet: true });
+//         return {
+//           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [
+//             { type: "text", text: `Failed to set active DAO: ${error}` },
+//           ],
+//         };
+//       }
+//     }
+//   );
 
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+//   server.tool(
+//     "listDaos",
+//     "List all DAOs where you are a member",
+//     {},
+//     async () => {
+//       try {
+//         const context = await useMcpContext({ requireWallet: true });
 
-        const { connection, keypair } = context;
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        // Use the getTokenOwnerRecords function to find all realms where the user is a member
-        const tokenOwnerRecordsRes =
-          await GovernanceService.getTokenOwnerRecords(connection, keypair);
+//         const { connection, keypair } = context;
 
-        if (!tokenOwnerRecordsRes.success || !tokenOwnerRecordsRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to fetch token owner records: ${tokenOwnerRecordsRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Use the getTokenOwnerRecords function to find all realms where the user is a member
+//         const tokenOwnerRecordsRes =
+//           await GovernanceService.getTokenOwnerRecords(connection, keypair);
 
-        const tokenOwnerRecords = tokenOwnerRecordsRes.data;
+//         if (!tokenOwnerRecordsRes.success || !tokenOwnerRecordsRes.data) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to fetch token owner records: ${tokenOwnerRecordsRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        if (tokenOwnerRecords.length === 0) {
-          return {
-            content: [
-              { type: "text", text: JSON.stringify({ daos: [] }, null, 2) },
-            ],
-          };
-        }
+//         const tokenOwnerRecords = tokenOwnerRecordsRes.data;
 
-        // Get realm information for each token owner record
-        const realmDataPromises = tokenOwnerRecords.map(
-          async (record, index) => {
-            try {
-              // Get realm info
-              const realmInfoRes = await GovernanceService.getRealmInfo(
-                connection,
-                record.realmAddress
-              );
+//         if (tokenOwnerRecords.length === 0) {
+//           return {
+//             content: [
+//               { type: "text", text: JSON.stringify({ daos: [] }, null, 2) },
+//             ],
+//           };
+//         }
 
-              if (!realmInfoRes.success || !realmInfoRes.data) {
-                return {
-                  index: index + 1,
-                  name: "Unknown",
-                  type: record.isIntegrated ? "Integrated" : "Standard",
-                  address: record.realmAddress.toBase58(),
-                  tokens:
-                    record.tokenOwnerRecords.governingTokenDepositAmount.toString(),
-                };
-              }
+//         // Get realm information for each token owner record
+//         const realmDataPromises = tokenOwnerRecords.map(
+//           async (record, index) => {
+//             try {
+//               // Get realm info
+//               const realmInfoRes = await GovernanceService.getRealmInfo(
+//                 connection,
+//                 record.realmAddress
+//               );
 
-              return {
-                index: index + 1,
-                name: realmInfoRes.data.name,
-                type: record.isIntegrated ? "Integrated" : "Standard",
-                address: record.realmAddress.toBase58(),
-                tokens:
-                  record.tokenOwnerRecords.governingTokenDepositAmount.toString(),
-                governance: realmInfoRes.data.governanceAddress.toBase58(),
-                treasury: realmInfoRes.data.treasuryAddress.toBase58(),
-                multisig: realmInfoRes.data.multisigAddress?.toBase58(),
-                vault: realmInfoRes.data.vaultAddress?.toBase58(),
-              };
-            } catch (error) {
-              return {
-                index: index + 1,
-                name: "Error",
-                type: "Unknown",
-                address: record.realmAddress.toBase58(),
-                tokens: "0",
-              };
-            }
-          }
-        );
+//               if (!realmInfoRes.success || !realmInfoRes.data) {
+//                 return {
+//                   index: index + 1,
+//                   name: "Unknown",
+//                   type: record.isIntegrated ? "Integrated" : "Standard",
+//                   address: record.realmAddress.toBase58(),
+//                   tokens:
+//                     record.tokenOwnerRecords.governingTokenDepositAmount.toString(),
+//                 };
+//               }
 
-        const processedRealms = await Promise.all(realmDataPromises);
+//               return {
+//                 index: index + 1,
+//                 name: realmInfoRes.data.name,
+//                 type: record.isIntegrated ? "Integrated" : "Standard",
+//                 address: record.realmAddress.toBase58(),
+//                 tokens:
+//                   record.tokenOwnerRecords.governingTokenDepositAmount.toString(),
+//                 governance: realmInfoRes.data.governanceAddress.toBase58(),
+//                 treasury: realmInfoRes.data.treasuryAddress.toBase58(),
+//                 multisig: realmInfoRes.data.multisigAddress?.toBase58(),
+//                 vault: realmInfoRes.data.vaultAddress?.toBase58(),
+//               };
+//             } catch (error) {
+//               return {
+//                 index: index + 1,
+//                 name: "Error",
+//                 type: "Unknown",
+//                 address: record.realmAddress.toBase58(),
+//                 tokens: "0",
+//               };
+//             }
+//           }
+//         );
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ daos: processedRealms }, null, 2),
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: `Failed to list DAOs: ${error}` }],
-        };
-      }
-    }
-  );
+//         const processedRealms = await Promise.all(realmDataPromises);
 
-  server.tool(
-    "fundTokenToDAOTreasury",
-    "Fund token accounts for the active DAO",
-    {
-      mint: z.string(),
-      amount: z.number().optional().default(100),
-      recipient: z.string().optional(),
-    },
-    async ({ mint, amount, recipient }) => {
-      try {
-        const context = await useMcpContext({
-          requireWallet: true,
-          requireDao: true,
-        });
+//         return {
+//           content: [
+//             {
+//               type: "text",
+//               text: JSON.stringify({ daos: processedRealms }, null, 2),
+//             },
+//           ],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [{ type: "text", text: `Failed to list DAOs: ${error}` }],
+//         };
+//       }
+//     }
+//   );
 
-        if (!context.success) {
-          return {
-            content: [
-              { type: "text", text: context.error || "Failed to get context" },
-            ],
-          };
-        }
+//   server.tool(
+//     "fundTokenToDAOTreasury",
+//     "Fund token accounts for the active DAO",
+//     {
+//       mint: z.string(),
+//       amount: z.number().optional().default(100),
+//       recipient: z.string().optional(),
+//     },
+//     async ({ mint, amount, recipient }) => {
+//       try {
+//         const context = await useMcpContext({
+//           requireWallet: true,
+//           requireDao: true,
+//         });
 
-        const { connection, keypair, realmAddress } = context;
+//         if (!context.success) {
+//           return {
+//             content: [
+//               { type: "text", text: context.error || "Failed to get context" },
+//             ],
+//           };
+//         }
 
-        // Check mint address
-        if (!mint) {
-          return {
-            content: [{ type: "text", text: "Token mint address is required" }],
-          };
-        }
+//         const { connection, keypair, realmAddress } = context;
 
-        // Parse token mint
-        let tokenMint: PublicKey;
-        try {
-          tokenMint = new PublicKey(mint);
-        } catch (e) {
-          return {
-            content: [{ type: "text", text: "Invalid token mint address" }],
-          };
-        }
+//         // Check mint address
+//         if (!mint) {
+//           return {
+//             content: [{ type: "text", text: "Token mint address is required" }],
+//           };
+//         }
 
-        // Validate amount
-        if (isNaN(amount) || amount <= 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Invalid amount. Please provide a positive number.",
-              },
-            ],
-          };
-        }
+//         // Parse token mint
+//         let tokenMint: PublicKey;
+//         try {
+//           tokenMint = new PublicKey(mint);
+//         } catch (e) {
+//           return {
+//             content: [{ type: "text", text: "Invalid token mint address" }],
+//           };
+//         }
 
-        // Get DAO info
-        const realmInfoRes = await GovernanceService.getRealmInfo(
-          connection,
-          realmAddress!
-        );
+//         // Validate amount
+//         if (isNaN(amount) || amount <= 0) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: "Invalid amount. Please provide a positive number.",
+//               },
+//             ],
+//           };
+//         }
 
-        if (!realmInfoRes.success || !realmInfoRes.data) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Get DAO info
+//         const realmInfoRes = await GovernanceService.getRealmInfo(
+//           connection,
+//           realmAddress!
+//         );
 
-        const realmInfo = realmInfoRes.data;
+//         if (!realmInfoRes.success || !realmInfoRes.data) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to get DAO information: ${realmInfoRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        // Determine recipient address
-        let recipientAddress: PublicKey;
-        let recipientType: string;
+//         const realmInfo = realmInfoRes.data;
 
-        if (recipient) {
-          try {
-            recipientAddress = new PublicKey(recipient);
-            recipientType = "custom";
-          } catch (e) {
-            return {
-              content: [{ type: "text", text: "Invalid recipient address" }],
-            };
-          }
-        } else {
-          // Use the appropriate treasury based on DAO type
-          if (realmInfo.isIntegrated && realmInfo.vaultAddress) {
-            recipientAddress = realmInfo.vaultAddress;
-            recipientType = "multisig_vault";
-          } else {
-            recipientAddress = realmInfo.treasuryAddress;
-            recipientType = "dao_treasury";
-          }
-        }
+//         // Determine recipient address
+//         let recipientAddress: PublicKey;
+//         let recipientType: string;
 
-        // Fund token account
-        const fundRes = await GovernanceService.fundTokenAccount(
-          connection,
-          keypair,
-          tokenMint,
-          recipientAddress,
-          amount
-        );
+//         if (recipient) {
+//           try {
+//             recipientAddress = new PublicKey(recipient);
+//             recipientType = "custom";
+//           } catch (e) {
+//             return {
+//               content: [{ type: "text", text: "Invalid recipient address" }],
+//             };
+//           }
+//         } else {
+//           // Use the appropriate treasury based on DAO type
+//           if (realmInfo.isIntegrated && realmInfo.vaultAddress) {
+//             recipientAddress = realmInfo.vaultAddress;
+//             recipientType = "multisig_vault";
+//           } else {
+//             recipientAddress = realmInfo.treasuryAddress;
+//             recipientType = "dao_treasury";
+//           }
+//         }
 
-        if (!fundRes.success) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to fund token account: ${fundRes.error?.message}`,
-              },
-            ],
-          };
-        }
+//         // Fund token account
+//         const fundRes = await GovernanceService.fundTokenAccount(
+//           connection,
+//           keypair,
+//           tokenMint,
+//           recipientAddress,
+//           amount
+//         );
 
-        const result = {
-          success: true,
-          mint: mint,
-          amount: amount,
-          recipient: recipientAddress.toBase58(),
-          recipientType: recipientType,
-          transaction: fundRes.data,
-        };
+//         if (!fundRes.success) {
+//           return {
+//             content: [
+//               {
+//                 type: "text",
+//                 text: `Failed to fund token account: ${fundRes.error?.message}`,
+//               },
+//             ],
+//           };
+//         }
 
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: "text", text: `Failed to fund token account: ${error}` },
-          ],
-        };
-      }
-    }
-  );
-}
+//         const result = {
+//           success: true,
+//           mint: mint,
+//           amount: amount,
+//           recipient: recipientAddress.toBase58(),
+//           recipientType: recipientType,
+//           transaction: fundRes.data,
+//         };
+
+//         return {
+//           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+//         };
+//       } catch (error) {
+//         return {
+//           content: [
+//             { type: "text", text: `Failed to fund token account: ${error}` },
+//           ],
+//         };
+//       }
+//     }
+//   );
+// }

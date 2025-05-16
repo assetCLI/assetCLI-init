@@ -1,4 +1,4 @@
-use anchor_lang::{ prelude::*, solana_program::{ self, system_instruction } };
+use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
     token_interface::{ Mint, TokenAccount, TokenInterface, TransferChecked, transfer_checked },
@@ -8,8 +8,8 @@ use crate::{
     errors::ContractError,
     BondingCurve,
     BuyResult,
-    DAOProposal,
     Global,
+    Proposal,
     SellResult,
     TokensPurchased,
     TokensSold,
@@ -32,44 +32,60 @@ pub struct Swap<'info> {
         bump = global.bump
     )]
     pub global: Box<Account<'info, Global>>,
-
     #[account(mut)]
-    /// CHECK: fee reciever asserted in validation function
-    pub fee_receiver: AccountInfo<'info>,
-
-    mint: Box<InterfaceAccount<'info, Mint>>,
-
-    #[account(
-        mut,
-        seeds=[BondingCurve::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
-        constraint = bonding_curve.mint == *mint.to_account_info().key @ ContractError::NotBondingCurveMint,
-        bump = bonding_curve.bump
-    )]
-    pub bonding_curve: Box<Account<'info, BondingCurve>>,
-
-    #[account(
-        mut,
-        associated_token::mint = mint,
-        associated_token::authority= bonding_curve,
-        constraint = bonding_curve.mint == *mint.to_account_info().key @ ContractError::NotBondingCurveMint,
-    )]
-    pub bonding_curve_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
-
+    /// CHECK: fee receiver asserted in validation function
+    pub fee_receiver: UncheckedAccount<'info>,
     #[account(
         init_if_needed,
         payer = user,
-        associated_token::mint = mint,
+        associated_token::mint = base_mint,
+        associated_token::authority = fee_receiver
+    )]
+    pub fee_receiver_base_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub token_mint: Box<InterfaceAccount<'info, Mint>>,
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
+    #[account(
+        mut,
+        seeds = [BondingCurve::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()],
+        constraint = bonding_curve.token_mint == token_mint.key() @ ContractError::NotBondingCurveMint,
+        bump = bonding_curve.bump
+    )]
+    pub bonding_curve: Box<Account<'info, BondingCurve>>,
+    #[account(
+        mut,
+        seeds = [BondingCurve::VAULT_PREFIX.as_bytes(), token_mint.key().as_ref()],
+        bump = bonding_curve.vault_bump,
+    )]
+    pub bonding_curve_vault: SystemAccount<'info>,
+    #[account(
+        mut,
+        associated_token::mint = token_mint,
+        associated_token::authority= bonding_curve_vault,
+        constraint = bonding_curve.token_mint == token_mint.key() @ ContractError::NotBondingCurveMint,
+    )]
+    pub bonding_curve_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = base_mint,
+        associated_token::authority = bonding_curve_vault
+    )]
+    pub bonding_curve_base_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(
+        init_if_needed,
+        payer = user,
+        associated_token::mint = token_mint,
         associated_token::authority = user
     )]
     pub user_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
-
-    // Add DAO proposal access when needed
     #[account(
-        seeds = [DAOProposal::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
-        bump
+        mut,
+        associated_token::mint = base_mint,
+        associated_token::authority = user
     )]
-    pub dao_proposal: Box<Account<'info, DAOProposal>>,
-
+    pub user_base_account: Box<InterfaceAccount<'info, TokenAccount>>,
+    #[account(seeds = [Proposal::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()], bump)]
+    pub proposal: Box<Account<'info, Proposal>>,
     pub system_program: Program<'info, System>,
     pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
@@ -78,7 +94,7 @@ pub struct Swap<'info> {
 
 impl<'info> Swap<'info> {
     pub fn validate(&self, params: &SwapParams) -> Result<()> {
-        let SwapParams { base_in, amount, min_out_amount: _ } = params;
+        let SwapParams { base_in: _, amount, min_out_amount: _ } = params;
         let clock = Clock::get()?;
         require!(self.bonding_curve.is_started(&clock), ContractError::CurveNotStarted);
         require!(*amount > 0, ContractError::MinSwap);
@@ -86,115 +102,120 @@ impl<'info> Swap<'info> {
             self.fee_receiver.key() == self.global.fee_receiver.key(),
             ContractError::InvalidFeeReceiver
         );
-        if !*base_in && self.bonding_curve.sol_raise_target > 0 {
-            if self.bonding_curve.sol_raise_target >= self.bonding_curve.sol_raise_target {
-                msg!("Target SOL reached. Maybe migrate now!?");
-            }
-            if self.bonding_curve.real_sol_reserves + *amount > self.bonding_curve.sol_raise_target {
-                msg!("Target SOL will be reached congrats!");
-            }
-        }
         Ok(())
     }
     pub fn process(&mut self, params: SwapParams) -> Result<()> {
-        let SwapParams { base_in, amount, min_out_amount } = params;
-        msg!(
-            "Swap started. BaseIn: {}, AmountIn: {}, MinOutAmount: {}",
-            base_in,
-            amount,
-            min_out_amount
-        );
-
-        let bonding_curve = self.bonding_curve.clone();
-        let sol_amount: u64;
-        let token_amount: u64;
-        let fee_lamports: u64;
         let clock = Clock::get()?;
+        let slot = clock.unix_timestamp;
+        require!(self.bonding_curve.is_started(&clock), ContractError::CurveNotStarted);
+        require!(!self.bonding_curve.complete, ContractError::BondingCurveComplete);
+        let SwapParams { base_in, amount, min_out_amount } = params;
+        let bonding_curve = self.bonding_curve.clone();
+        let base_amount: u64;
+        let token_amount: u64;
+        let fee_amount: u64;
 
         if base_in {
-            // Sell token for SOL
+            // Sell token for base token
             require!(
                 self.user_token_account.amount >= amount,
                 ContractError::InsufficientUserTokens
             );
-
-            // Add check to verify bonding curve has enough SOL
-            let bonding_curve_sol = self.bonding_curve.real_sol_reserves;
-            msg!("Bonding curve SOL reserves: {}", bonding_curve_sol);
-
-            let sell_result = match self.bonding_curve.apply_sell(amount) {
+            let sell_result = match self.bonding_curve.apply_sell(amount, slot) {
                 Some(result) => result,
                 None => {
-                    msg!("Sell failed - likely insufficient SOL in bonding curve");
                     return Err(ContractError::SellFailed.into());
                 }
             };
-
-            msg!("SellResult: {:#?}", sell_result);
-
-            sol_amount = sell_result.sol_amount;
+            // Use fee_amount from SellResult
+            fee_amount = sell_result.fee_amount;
+            base_amount = sell_result.base_amount;
             token_amount = sell_result.token_amount;
-
-            fee_lamports = bonding_curve.calculate_fee(sol_amount, clock.unix_timestamp)?;
-            msg!("Fee: {} SOL", fee_lamports);
-            self.complete_sell(sell_result.clone(), min_out_amount, fee_lamports)?;
-
-            // Emit event with the actual price
+            self.complete_sell(sell_result.clone(), min_out_amount, fee_amount)?;
             emit!(TokensSold {
                 bonding_curve: self.bonding_curve.key(),
                 seller: self.user.key(),
                 token_amount,
-                sol_amount,
+                base_amount,
                 price_per_token: sell_result.price_per_token,
                 timestamp: clock.unix_timestamp,
             });
         } else {
-            // Buy token with SOL
-            let buy_result = self.bonding_curve.apply_buy(amount).ok_or(ContractError::BuyFailed)?;
-
-            sol_amount = buy_result.sol_amount;
+            // Buy token with base token
+            // User sends net base, so we must reverse-calculate gross for fee
+            // Let net = gross - fee(gross), solve for gross
+            // gross = net * 10000 / (10000 - fee_bps)
+            let fee_bps = bonding_curve.get_fee_bps(slot);
+            let gross_base = amount
+                .checked_mul(10_000)
+                .ok_or(ProgramError::ArithmeticOverflow)?
+                .checked_div(10_000 - fee_bps)
+                .ok_or(ProgramError::ArithmeticOverflow)?;
+            // Use gross_base for buy, get fee from BuyResult
+            let buy_result = self.bonding_curve
+                .apply_buy(gross_base, slot)
+                .ok_or(ContractError::BuyFailed)?;
+            fee_amount = buy_result.fee_amount;
+            base_amount = amount;
             token_amount = buy_result.token_amount;
-
-            fee_lamports = bonding_curve.calculate_fee(sol_amount, clock.unix_timestamp)?;
-            self.complete_buy(buy_result.clone(), min_out_amount, fee_lamports)?;
-
-            // Emit simplified event to save compute units
+            self.complete_buy(buy_result.clone(), min_out_amount, fee_amount)?;
             emit!(TokensPurchased {
                 bonding_curve: self.bonding_curve.key(),
                 buyer: self.user.key(),
-                sol_amount,
+                base_amount,
                 token_amount,
                 price_per_token: buy_result.price_per_token,
                 timestamp: clock.unix_timestamp,
             });
         }
-
-        msg!("{:#?}", bonding_curve);
-
         Ok(())
     }
 
     fn complete_buy(
-        &self,
+        &mut self,
         buy_result: BuyResult,
         min_out_amount: u64,
-        fee_lamports: u64
+        fee_amount: u64
     ) -> Result<()> {
-        let buy_token_with_fee = buy_result.token_amount + fee_lamports;
         require!(buy_result.token_amount >= min_out_amount, ContractError::SlippageExceeded);
-        require!(
-            self.user.get_lamports() >= buy_token_with_fee,
-            ContractError::InsufficientUserSOL
-        );
-        // Transfer tokens to user
+        // Transfer net base token from user to vault
+        let user_to_vault = TransferChecked {
+            from: self.user_base_account.to_account_info(),
+            authority: self.user.to_account_info(),
+            to: self.bonding_curve_base_account.to_account_info(),
+            mint: self.base_mint.to_account_info(),
+        };
+        transfer_checked(
+            CpiContext::new(self.token_program.to_account_info(), user_to_vault),
+            buy_result.base_amount, // this is the base_amount minus fee
+            self.base_mint.decimals
+        )?;
+        // Transfer fee to fee receiver
+        let vault_to_fee = TransferChecked {
+            from: self.bonding_curve_base_account.to_account_info(),
+            authority: self.bonding_curve_vault.to_account_info(),
+            to: self.fee_receiver_base_account.to_account_info(),
+            mint: self.base_mint.to_account_info(),
+        };
+
+        let signer = self.bonding_curve.get_vault_seeds();
+        let signer_seeds = &[&signer[..]];
+        transfer_checked(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                vault_to_fee,
+                signer_seeds
+            ),
+            fee_amount,
+            self.base_mint.decimals
+        )?;
+        // Transfer project tokens to user
         let cpi_accounts = TransferChecked {
             from: self.bonding_curve_token_account.to_account_info(),
-            authority: self.bonding_curve.to_account_info(),
+            authority: self.bonding_curve_vault.to_account_info(),
             to: self.user_token_account.to_account_info(),
-            mint: self.mint.to_account_info(),
+            mint: self.token_mint.to_account_info(),
         };
-        let signer = BondingCurve::get_signer(&self.bonding_curve.bump, &self.bonding_curve.mint);
-        let signer_seeds = &[&signer[..]];
         transfer_checked(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
@@ -202,76 +223,68 @@ impl<'info> Swap<'info> {
                 signer_seeds
             ),
             buy_result.token_amount,
-            self.mint.decimals
+            self.token_mint.decimals
         )?;
-        msg!("Token transfer complete");
-
-        // Transfer entire SOL amount to bonding curve (no split during active phase)
-        let transfer_instruction = system_instruction::transfer(
-            self.user.key,
-            &self.bonding_curve.key(),
-            buy_result.sol_amount
-        );
-        solana_program::program::invoke_signed(
-            &transfer_instruction,
-            &[
-                self.user.to_account_info(),
-                self.bonding_curve.to_account_info(),
-                self.system_program.to_account_info(),
-            ],
-            &[]
-        )?;
-        msg!("SOL transfer complete");
-
-        // Transfer fee to fee receiver
-        let fee_transfer_ix = system_instruction::transfer(
-            self.user.key,
-            &self.fee_receiver.key(),
-            fee_lamports
-        );
-        solana_program::program::invoke_signed(
-            &fee_transfer_ix,
-            &[
-                self.user.to_account_info(),
-                self.fee_receiver.clone(),
-                self.system_program.to_account_info(),
-            ],
-            &[]
-        )?;
-        msg!("Fee transfer complete");
+        self.bonding_curve.real_base_reserves =
+            self.bonding_curve.real_base_reserves.saturating_sub(fee_amount);
         Ok(())
     }
 
     fn complete_sell(
-        &self,
+        &mut self,
         sell_result: SellResult,
         min_out_amount: u64,
-        fee_lamports: u64
+        fee_amount: u64
     ) -> Result<()> {
-        // Sell tokens
-        let sell_amount_minus_fee = sell_result.sol_amount - fee_lamports;
-        require!(sell_amount_minus_fee >= min_out_amount, ContractError::SlippageExceeded);
+        require!(sell_result.base_amount >= min_out_amount, ContractError::SlippageExceeded);
+        // Send project tokens from user
         let cpi_accounts = TransferChecked {
             from: self.user_token_account.to_account_info(),
             authority: self.user.to_account_info(),
             to: self.bonding_curve_token_account.to_account_info(),
-            mint: self.mint.to_account_info(),
+            mint: self.token_mint.to_account_info(),
         };
         transfer_checked(
             CpiContext::new(self.token_program.to_account_info(), cpi_accounts),
             sell_result.token_amount,
-            self.mint.decimals
+            self.token_mint.decimals
         )?;
-        msg!("Token transfer complete");
-
-        // Transfer SOL to user
-        self.bonding_curve.sub_lamports(sell_amount_minus_fee).unwrap();
-        self.user.add_lamports(sell_amount_minus_fee).unwrap();
-        msg!("SOL transfer complete");
-
-        self.bonding_curve.sub_lamports(fee_lamports).unwrap();
-        self.fee_receiver.add_lamports(fee_lamports).unwrap();
-        msg!("Fee transfer complete");
+        // Transfer base token from vault to user (minus fee)
+        let vault_to_user = TransferChecked {
+            from: self.bonding_curve_base_account.to_account_info(),
+            authority: self.bonding_curve_vault.to_account_info(),
+            to: self.user_base_account.to_account_info(),
+            mint: self.base_mint.to_account_info(),
+        };
+        let signer = self.bonding_curve.get_vault_seeds();
+        let signer_seeds = &[&signer[..]];
+        transfer_checked(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                vault_to_user,
+                signer_seeds
+            ),
+            sell_result.base_amount, // this is the base_amount minus fee
+            self.base_mint.decimals
+        )?;
+        // Transfer fee to fee receiver
+        let vault_to_fee = TransferChecked {
+            from: self.bonding_curve_base_account.to_account_info(),
+            authority: self.bonding_curve_vault.to_account_info(),
+            to: self.fee_receiver_base_account.to_account_info(),
+            mint: self.base_mint.to_account_info(),
+        };
+        transfer_checked(
+            CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                vault_to_fee,
+                signer_seeds
+            ),
+            fee_amount,
+            self.base_mint.decimals
+        )?;
+        self.bonding_curve.real_base_reserves =
+            self.bonding_curve.real_base_reserves.saturating_sub(fee_amount);
         Ok(())
     }
 }

@@ -1,11 +1,6 @@
-use std::fmt;
-
 use anchor_lang::prelude::*;
 
-use crate::{ errors::ContractError, Global };
-
-use super::BondingCurveLockerCtx;
-
+use crate::DEFAULT_SUPPLY;
 pub fn bps_mul(bps: u64, value: u64, divisor: u64) -> Option<u64> {
     bps_mul_raw(bps, value, divisor).unwrap().try_into().ok()
 }
@@ -17,18 +12,21 @@ pub fn bps_mul_raw(bps: u64, value: u64, divisor: u64) -> Option<u128> {
 #[account]
 #[derive(InitSpace, Debug, Default)]
 pub struct BondingCurve {
-    pub mint: Pubkey,
+    pub token_mint: Pubkey,
+    pub base_mint: Pubkey,
     pub creator: Pubkey,
-    pub initial_virtual_token_reserves: u64,
-    pub virtual_sol_reserves: u64,
+    pub virtual_base_reserves: u64,
     pub virtual_token_reserves: u64,
-    pub real_sol_reserves: u64,
+    pub real_base_reserves: u64,
     pub real_token_reserves: u64,
     pub token_total_supply: u64,
     pub start_time: i64,
     pub complete: bool,
+    pub token_decimals: u8,
+    pub base_decimals: u8,
+    pub base_raise_target: u64,
     pub bump: u8,
-    pub sol_raise_target: u64,
+    pub vault_bump: u8,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
@@ -37,11 +35,14 @@ pub struct CreateBondingCurveParams {
     pub name: String,
     pub symbol: String,
     pub uri: String,
-    pub sol_raise_target: u64,
-    // DaoProposal Metadat
-    pub dao_name: String,
-    pub dao_description: String,
-    pub realm_address: Pubkey,
+    pub base_raise_target: u64,
+    pub token_decimals: u8,
+    pub base_decimals: u8,
+    pub token_total_supply: Option<u64>,
+    // Proposal Metadata
+    pub description: String,
+    pub treasury_address: Pubkey,
+    pub authority_address: Pubkey,
     pub twitter_handle: Option<String>,
     pub discord_link: Option<String>,
     pub website_url: Option<String>,
@@ -55,65 +56,66 @@ pub struct CreateBondingCurveParams {
 pub struct BuyResult {
     /// Amount of tokens that the user will receive
     pub token_amount: u64,
-    /// Amount of SOL that the user paid
-    pub sol_amount: u64,
-    /// Price per token in SOL
+    /// Amount of base token that the user paid
+    pub base_amount: u64,
+    /// Price per token in base token
     pub price_per_token: f64,
+    /// Fee taken in base token
+    pub fee_amount: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct SellResult {
     /// Amount of tokens that the user is selling
     pub token_amount: u64,
-    /// Amount of SOL that the user will receive
-    pub sol_amount: u64,
-    /// Price per token in SOL
+    /// Amount of base token that the user will receive
+    pub base_amount: u64,
+    /// Price per token in base token
     pub price_per_token: f64,
+    /// Fee taken in base token
+    pub fee_amount: u64,
 }
 
 impl BondingCurve {
-    // Change this to match the seed used in CreateBondingCurve account initialization
     pub const SEED_PREFIX: &'static str = "bonding_curve";
     pub const TOKEN_PREFIX: &'static str = "bonding_curve_token";
+    pub const VAULT_PREFIX: &'static str = "bonding_curve_vault";
 
-    pub fn calculate_fee(&self, amount: u64, time_now: i64) -> Result<u64> {
-        let start_time = self.start_time;
-
-        msg!("Start time: {}", start_time);
-        msg!("Current time: {}", time_now);
-
-        let time_diff = time_now - start_time;
-        let slots_passed = time_diff / 400;
-        msg!("Time diff: {} ms ({} slots)", time_diff, slots_passed);
-
-        let mut sol_fee: u64 = 0;
-
-        if slots_passed < 150 {
-            msg!("Phase 1: 99% fees between slot 0 - 150");
-            sol_fee = bps_mul(9900, amount, 10_000).unwrap();
-        } else if slots_passed >= 150 && slots_passed <= 250 {
-            msg!("Phase 2: Linear decrease between 150 - 250");
-
-            // Calculate the minimum fee bps (at slot 250) scaled by 10000 for precision
-            let fee_bps = (-8_300_000_i64)
-                .checked_mul(slots_passed)
-                .ok_or(ContractError::ArithmeticError)?
-                .checked_add(2_162_600_000)
-                .ok_or(ContractError::ArithmeticError)?
-                .checked_div(1_000_000)
-                .ok_or(ContractError::ArithmeticError)?;
-            msg!("Fee Bps: {}", fee_bps);
-
-            sol_fee = bps_mul(fee_bps as u64, amount, 10_000).unwrap();
-        } else if slots_passed > 250 {
-            msg!("Phase 3: 1% fees after 250");
-            sol_fee = bps_mul(100, amount, 10_000).unwrap();
+    pub fn get_fee_bps(&self, time_now: i64) -> u64 {
+        // Decay from 10% to 1% over 7 days (in seconds)
+        let decay_period = 7 * 24 * 60 * 60; // 7 days in seconds
+        let start_fee = 1000u64; // 10%
+        let min_fee = 100u64; // 1%
+        let elapsed = time_now.saturating_sub(self.start_time);
+        if elapsed >= decay_period {
+            min_fee
+        } else {
+            let decay =
+                ((start_fee - min_fee) as u64).saturating_mul(elapsed as u64) /
+                (decay_period as u64);
+            start_fee - decay
         }
-        Ok(sol_fee)
     }
 
-    pub fn get_signer<'a>(bump: &'a u8, mint: &'a Pubkey) -> [&'a [u8]; 3] {
-        [Self::SEED_PREFIX.as_bytes(), mint.as_ref(), std::slice::from_ref(bump)]
+    pub fn calculate_fee(&self, amount: u64, time_now: i64) -> Result<u64> {
+        let fee_bps = self.get_fee_bps(time_now);
+        let fee = (amount as u128)
+            .checked_mul(fee_bps as u128)
+            .and_then(|v| v.checked_div(10_000))
+            .ok_or(ProgramError::ArithmeticOverflow)?;
+        Ok(fee as u64)
+    }
+
+    pub fn get_signer_seeds(&self) -> [&[u8]; 3] {
+        [Self::SEED_PREFIX.as_bytes(), self.token_mint.as_ref(), std::slice::from_ref(&self.bump)]
+    }
+
+    pub fn get_vault_seeds(&self) -> [&[u8]; 3] {
+        [
+            Self::VAULT_PREFIX.as_bytes(),
+            self.token_mint.as_ref(),
+            std::slice::from_ref(&self.vault_bump),
+        ]
     }
 
     pub fn is_started(&self, clock: &Clock) -> bool {
@@ -121,75 +123,72 @@ impl BondingCurve {
         now >= self.start_time
     }
 
-    pub fn msg(&self) -> () {
-        msg!("{:#?}", self);
-    }
-
     pub fn update_from_params(
         &mut self,
-        mint: Pubkey,
+        token_mint: Pubkey,
+        base_mint: Pubkey,
         creator: Pubkey,
-        global_config: &Global,
         params: &CreateBondingCurveParams,
         clock: &Clock,
-        bump: u8
+        bump: u8,
+        vault_bump: u8
     ) -> &mut Self {
         let start_time = clock.unix_timestamp;
         let creator = creator;
         let complete = false;
 
-        let sol_raise_target = params.sol_raise_target;
-        // but only 50% is actually tradable
+        let base_raise_target: u64 = params.base_raise_target;
+        let token_total_supply = params.token_total_supply.unwrap_or(DEFAULT_SUPPLY);
+        let virtual_token_reserves = token_total_supply;
+        let real_token_reserves = virtual_token_reserves / 2; // 50% of the total supply
         self.clone_from(
             &(BondingCurve {
-                mint,
+                token_mint: token_mint,
                 creator,
-                // Use FULL token supply for virtual reserves to accurately represent price
-                virtual_token_reserves: global_config.token_total_supply, // 100M tokens
-                virtual_sol_reserves: params.sol_raise_target,
-                initial_virtual_token_reserves: global_config.token_total_supply,
-                real_sol_reserves: 0,
-                // Only 50% of tokens available for trading
-                real_token_reserves: global_config.initial_real_token_reserves, // 50M tokens
-                token_total_supply: global_config.token_total_supply,
+                virtual_token_reserves,
+                virtual_base_reserves: params.base_raise_target,
+                real_base_reserves: 0,
+                real_token_reserves,
+                token_total_supply,
+                base_mint,
+                token_decimals: params.token_decimals,
+                base_decimals: params.base_decimals,
                 start_time,
                 complete,
                 bump,
-                sol_raise_target,
+                base_raise_target,
+                vault_bump,
             })
         );
         self
     }
 
-    pub fn apply_buy(&mut self, mut sol_amount: u64) -> Option<BuyResult> {
-        msg!("Applying buy: {}", sol_amount);
-        // Check if we're reaching or exceeding the SOL raise target
-        if self.sol_raise_target > 0 {
-            let potential_new_sol_reserves = self.real_sol_reserves.checked_add(sol_amount)?;
-            if potential_new_sol_reserves >= self.sol_raise_target {
-                msg!("SOL raise target of {} reached or exceeded.", self.sol_raise_target);
+    pub fn apply_buy(&mut self, base_amount: u64, time_now: i64) -> Option<BuyResult> {
+        // Calculate fee and net base amount
+        let fee_amount = self.calculate_fee(base_amount, time_now).ok()?;
+        let mut net_base_amount: u64 = base_amount.checked_sub(fee_amount)?;
+
+        // Check if we're reaching or exceeding the base raise target
+        if self.base_raise_target > 0 {
+            let potential_new_base_reserves = self.real_base_reserves.checked_add(net_base_amount)?;
+            if potential_new_base_reserves >= self.base_raise_target {
                 // Mark as complete (will trigger migration path later)
                 self.complete = true;
             }
         }
 
-        let mut token_amount = self.get_tokens_for_buy_sol(sol_amount)?;
-        msg!("Token amount: {:?}", token_amount);
+        // Use net_base_amount for all reserve math
+        let mut token_amount = self.get_tokens_for_buy_base(net_base_amount)?;
 
         // Check if this purchase would exceed the token reserves
         if token_amount >= self.real_token_reserves {
             // Last Buy - just buy all remaining tokens
             token_amount = self.real_token_reserves;
-
-            // Calculate SOL amount needed using the bonding curve formula
+            // Calculate base amount needed using the bonding curve formula
             // This ensures pricing is consistent with the curve
-            sol_amount = self.get_sol_for_exact_tokens(token_amount)?;
-
+            net_base_amount = self.get_base_for_exact_tokens(token_amount)?;
             // Mark the curve as complete
-
             self.complete = true;
-
-            msg!("ApplyBuy: Last buy - all tokens purchased. SOL amount: {}", sol_amount);
         }
 
         // Adjusting token reserve values
@@ -197,56 +196,44 @@ impl BondingCurve {
         let new_virtual_token_reserves = (self.virtual_token_reserves as u128).checked_sub(
             token_amount as u128
         )?;
-        msg!("ApplyBuy: new_virtual_token_reserves: {}", new_virtual_token_reserves);
 
         // New Real Token Reserves
         let new_real_token_reserves = (self.real_token_reserves as u128).checked_sub(
             token_amount as u128
         )?;
-        msg!("ApplyBuy: new_real_token_reserves: {}", new_real_token_reserves);
-
-        // Adjusting sol reserve values
-        // New Virtual Sol Reserves
-        let new_virtual_sol_reserves = (self.virtual_sol_reserves as u128).checked_add(
-            sol_amount as u128
+        // Adjusting base reserve values
+        // New Virtual base Reserves
+        let new_virtual_base_reserves = (self.virtual_base_reserves as u128).checked_add(
+            net_base_amount as u128
         )?;
-        msg!("ApplyBuy: new_virtual_sol_reserves: {}", new_virtual_sol_reserves);
-
-        // New Real Sol Reserves
-        let new_real_sol_reserves = (self.real_sol_reserves as u128).checked_add(
-            sol_amount as u128
+        // New Real base Reserves
+        let new_real_base_reserves = (self.real_base_reserves as u128).checked_add(
+            net_base_amount as u128
         )?;
-        msg!("ApplyBuy: new_real_sol_reserves: {}", new_real_sol_reserves);
-
         // Calculate price per token
         let price_per_token = if token_amount > 0 {
-            (sol_amount as f64) / (token_amount as f64)
+            (net_base_amount as f64) / (token_amount as f64)
         } else {
             0.0
         };
 
         self.virtual_token_reserves = new_virtual_token_reserves.try_into().ok()?;
         self.real_token_reserves = new_real_token_reserves.try_into().ok()?;
-        self.virtual_sol_reserves = new_virtual_sol_reserves.try_into().ok()?;
-        self.real_sol_reserves = new_real_sol_reserves.try_into().ok()?;
-        self.msg();
+        self.virtual_base_reserves = new_virtual_base_reserves.try_into().ok()?;
+        self.real_base_reserves = new_real_base_reserves.try_into().ok()?;
         Some(BuyResult {
             token_amount,
-            sol_amount,
+            base_amount: net_base_amount,
             price_per_token,
+            fee_amount,
         })
     }
 
-    pub fn apply_sell(&mut self, token_amount: u64) -> Option<SellResult> {
-        msg!("apply_sell: token_amount: {}", token_amount);
-
-        // Computing Sol Amount out
-        let sol_amount = self.get_sol_for_sell_tokens(token_amount)?;
-        msg!("apply_sell: sol_amount: {}", sol_amount);
-
-        // Check if bonding curve has enough SOL to fulfill the sell request
-        if sol_amount > self.real_sol_reserves {
-            msg!("apply_sell: Not enough SOL reserves to fulfill sell request");
+    pub fn apply_sell(&mut self, token_amount: u64, time_now: i64) -> Option<SellResult> {
+        let gross_base_amount = self.get_base_for_sell_tokens(token_amount)?;
+        let fee_amount = self.calculate_fee(gross_base_amount, time_now).ok()?;
+        let net_base_amount = gross_base_amount.checked_sub(fee_amount)?;
+        if gross_base_amount > self.real_base_reserves {
             return None;
         }
 
@@ -255,127 +242,94 @@ impl BondingCurve {
         let new_virtual_token_reserves = (self.virtual_token_reserves as u128).checked_add(
             token_amount as u128
         )?;
-        msg!("apply_sell: new_virtual_token_reserves: {}", new_virtual_token_reserves);
-
         // New Real Token Reserves
         let new_real_token_reserves = (self.real_token_reserves as u128).checked_add(
             token_amount as u128
         )?;
-        msg!("apply_sell: new_real_token_reserves: {}", new_real_token_reserves);
-
-        // Adjusting sol reserve values
-        // New Virtual Sol Reserves
-        let new_virtual_sol_reserves = (self.virtual_sol_reserves as u128).checked_sub(
-            sol_amount as u128
+        // Adjusting base reserve values
+        // New Virtual base Reserves
+        let new_virtual_base_reserves = (self.virtual_base_reserves as u128).checked_sub(
+            gross_base_amount as u128
         )?;
-        msg!("apply_sell: new_virtual_sol_reserves: {}", new_virtual_sol_reserves);
-
-        // New Real Sol Reserves
-        let new_real_sol_reserves = self.real_sol_reserves.checked_sub(sol_amount)?;
-        msg!("apply_sell: new_real_sol_reserves: {}", new_real_sol_reserves);
-
+        // New Real Base Reserves
+        let new_real_base_reserves = (self.real_base_reserves as u128).checked_sub(gross_base_amount as u128)?;
         // Calculate price per token
         let price_per_token = if token_amount > 0 {
-            (sol_amount as f64) / (token_amount as f64)
+            (net_base_amount as f64) / (token_amount as f64)
         } else {
             0.0
         };
 
         self.virtual_token_reserves = new_virtual_token_reserves.try_into().ok()?;
         self.real_token_reserves = new_real_token_reserves.try_into().ok()?;
-        self.virtual_sol_reserves = new_virtual_sol_reserves.try_into().ok()?;
-        self.real_sol_reserves = new_real_sol_reserves;
-
-        msg!("apply_sell: updated state successfully");
-        self.msg();
-
+        self.virtual_base_reserves = new_virtual_base_reserves.try_into().ok()?;
+        self.real_base_reserves = new_real_base_reserves.try_into().ok()?;
         Some(SellResult {
             token_amount,
-            sol_amount,
+            base_amount: net_base_amount,
             price_per_token,
+            fee_amount,
         })
     }
 
-    pub fn get_tokens_for_buy_sol(&self, sol_amount: u64) -> Option<u64> {
+    pub fn get_tokens_for_buy_base(&self, sol_amount: u64) -> Option<u64> {
         if sol_amount == 0 {
             return None;
         }
-        msg!("GetTokensForBuySol: sol_amount: {}", sol_amount);
-
         // Calculate constant k = virtual_sol * virtual_token
-        let k = (self.virtual_sol_reserves as u128).checked_mul(
+        let k = (self.virtual_base_reserves as u128).checked_mul(
             self.virtual_token_reserves as u128
         )?;
-        msg!("GetTokensForBuySol: constant k: {}", k);
-
         // Calculate new virtual SOL reserves after adding input SOL
-        let new_virtual_sol_reserves = (self.virtual_sol_reserves as u128).checked_add(
+        let new_virtual_base_reserves = (self.virtual_base_reserves as u128).checked_add(
             sol_amount as u128
         )?;
-        msg!("GetTokensForBuySol: new_virtual_sol_reserves: {}", new_virtual_sol_reserves);
-
         // Calculate new virtual token reserves: k / new_sol_reserves
-        let new_virtual_token_reserves = k.checked_div(new_virtual_sol_reserves)?;
-        msg!("GetTokensForBuySol: new_virtual_token_reserves: {}", new_virtual_token_reserves);
-
+        let new_virtual_token_reserves = k.checked_div(new_virtual_base_reserves)?;
         // Calculate tokens received
         let tokens_received = (self.virtual_token_reserves as u128).checked_sub(
             new_virtual_token_reserves
         )?;
-        msg!("GetTokensForBuySol: tokens_received: {}", tokens_received);
-
         // Safely convert to u64
         let recv = tokens_received.try_into().ok()?;
-        msg!("GetTokensForBuySol: recv: {}", recv);
         Some(recv)
     }
 
-    pub fn get_sol_for_sell_tokens(&self, token_amount: u64) -> Option<u64> {
+    pub fn get_base_for_sell_tokens(&self, token_amount: u64) -> Option<u64> {
         if token_amount == 0 {
             return None;
         }
-        msg!("GetSolForSellTokens: token_amount: {}", token_amount);
-
         // Calculate constant k = virtual_sol * virtual_token
-        let k = (self.virtual_sol_reserves as u128).checked_mul(
+        let k = (self.virtual_base_reserves as u128).checked_mul(
             self.virtual_token_reserves as u128
         )?;
-        msg!("GetSolForSellTokens: constant k: {}", k);
-
         // Calculate new virtual token reserves after adding input tokens
         let new_virtual_token_reserves = (self.virtual_token_reserves as u128).checked_add(
             token_amount as u128
         )?;
-        msg!("GetSolForSellTokens: new_virtual_token_reserves: {}", new_virtual_token_reserves);
-
         // Calculate new virtual SOL reserves: k / new_token_reserves
-        let new_virtual_sol_reserves = k.checked_div(new_virtual_token_reserves)?;
-        msg!("GetSolForSellTokens: new_virtual_sol_reserves: {}", new_virtual_sol_reserves);
-
+        let new_virtual_base_reserves = k.checked_div(new_virtual_token_reserves)?;
         // Calculate SOL received
-        let sol_received = (self.virtual_sol_reserves as u128).checked_sub(
-            new_virtual_sol_reserves
+        let base_recieved = (self.virtual_base_reserves as u128).checked_sub(
+            new_virtual_base_reserves
         )?;
-        msg!("GetSolForSellTokens: sol_received: {}", sol_received);
-
         // Safely convert to u64
-        let recv = sol_received.try_into().ok()?;
-        msg!("GetSolForSellTokens: recv: {}", recv);
+        let recv = base_recieved.try_into().ok()?;
         Some(recv)
     }
 
     // New helper function for the "last buy" scenario
-    pub fn get_sol_for_exact_tokens(&self, token_amount: u64) -> Option<u64> {
+    pub fn get_base_for_exact_tokens(&self, token_amount: u64) -> Option<u64> {
         if token_amount == 0 {
             return None;
         }
 
-        // Use the same calculation as get_sol_for_sell_tokens but with a twist:
+        // Use the same calculation as get_base_for_sell_tokens but with a twist:
         // Instead of adding tokens, we're removing them (the inverse operation of buying)
-        // This tells us how much SOL is needed to buy exactly these tokens
+        // This tells us how much base is needed to buy exactly these tokens
 
-        // Calculate constant k = virtual_sol * virtual_token
-        let k = (self.virtual_sol_reserves as u128).checked_mul(
+        // Calculate constant k = virtual_base * virtual_token
+        let k = (self.virtual_base_reserves as u128).checked_mul(
             self.virtual_token_reserves as u128
         )?;
 
@@ -385,88 +339,13 @@ impl BondingCurve {
         )?;
 
         // Calculate new virtual SOL reserves: k / new_token_reserves
-        let new_virtual_sol_reserves = k.checked_div(new_virtual_token_reserves)?;
+        let new_virtual_base_reserves = k.checked_div(new_virtual_token_reserves)?;
 
         // Calculate SOL needed (difference between new and current SOL reserves)
-        let sol_needed = new_virtual_sol_reserves.checked_sub(self.virtual_sol_reserves as u128)?;
-
+        let base_needed = new_virtual_base_reserves.checked_sub(
+            self.virtual_base_reserves as u128
+        )?;
         // Safely convert to u64
-        sol_needed.try_into().ok()
-    }
-
-    pub fn invariant(ctx: &mut BondingCurveLockerCtx) -> Result<()> {
-        let bonding_curve = &mut ctx.bonding_curve;
-        let tkn_account = &mut ctx.bonding_curve_token_account;
-        if tkn_account.owner != bonding_curve.key() {
-            msg!(
-                "Token account authority is not the bonding curve: expected {} but got {}",
-                bonding_curve.key(),
-                tkn_account.owner
-            );
-            return Err(ContractError::BondingCurveInvariant.into());
-        }
-
-        tkn_account.reload()?;
-        let lamports: u64 = bonding_curve.get_lamports();
-        let mut tkn_amount = tkn_account.amount;
-        if tkn_amount + ctx.global.initial_real_token_reserves >= ctx.global.token_total_supply {
-            tkn_amount = tkn_amount
-                .checked_add(ctx.global.initial_real_token_reserves)
-                .ok_or(ContractError::ArithmeticError)?
-                .checked_sub(ctx.global.token_total_supply)
-                .ok_or(ContractError::ArithmeticError)?;
-        }
-        let rent_exemption_balance: u64 = Rent::get()?.minimum_balance(
-            8 + (BondingCurve::INIT_SPACE as usize)
-        );
-        let bonding_curve_pool_lamports: u64 = lamports - rent_exemption_balance;
-        // Ensure real sol reserves are equal to bonding curve pool lamports
-        if bonding_curve_pool_lamports != bonding_curve.real_sol_reserves {
-            msg!(
-                "real_sol_r:{}, bonding_lamps:{}",
-                bonding_curve.real_sol_reserves,
-                bonding_curve_pool_lamports
-            );
-            msg!("Invariant failed: real_sol_reserves != bonding_curve_pool_lamports");
-            return Err(ContractError::BondingCurveInvariant.into());
-        }
-
-        // Ensure the virtual reserves are always positive
-        if bonding_curve.virtual_sol_reserves <= 0 {
-            msg!("Invariant failed: virtual_sol_reserves <= 0");
-            return Err(ContractError::BondingCurveInvariant.into());
-        }
-        if bonding_curve.virtual_token_reserves <= 0 {
-            msg!("Invariant failed: virtual_token_reserves <= 0");
-            return Err(ContractError::BondingCurveInvariant.into());
-        }
-
-        // Ensure the token total supply is consistent with the reserves
-        if bonding_curve.real_token_reserves != tkn_amount {
-            msg!("Invariant failed: real_token_reserves != tkn_amount");
-            msg!("real_token_reserves: {}", bonding_curve.real_token_reserves);
-            msg!("real_token_reserves: {}", bonding_curve.token_total_supply);
-            msg!("tkn_amount: {}", tkn_amount);
-            return Err(ContractError::BondingCurveInvariant.into());
-        }
-        Ok(())
-    }
-}
-
-impl fmt::Display for BondingCurve {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "BondingCurve {{ creator: {:?}, initial_virtual_token_reserves: {:?}, virtual_sol_reserves: {:?}, virtual_token_reserves: {:?}, real_sol_reserves: {:?}, real_token_reserves: {:?}, token_total_supply: {:?}, start_time: {:?}, complete: {:?} }}",
-            self.creator,
-            self.initial_virtual_token_reserves,
-            self.virtual_sol_reserves,
-            self.virtual_token_reserves,
-            self.real_sol_reserves,
-            self.real_token_reserves,
-            self.token_total_supply,
-            self.start_time,
-            self.complete
-        )
+        base_needed.try_into().ok()
     }
 }

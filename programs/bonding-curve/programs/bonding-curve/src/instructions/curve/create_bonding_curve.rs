@@ -1,4 +1,4 @@
-use anchor_lang::prelude::*;
+use anchor_lang::{ prelude::*, solana_program::{ program::invoke, system_instruction } };
 use anchor_spl::{
     associated_token::AssociatedToken,
     metadata::{
@@ -16,7 +16,8 @@ use crate::{
     CreateBondingCurveParams,
     Global,
     ProgramStatus,
-    DAOProposal, // New import
+    Proposal,
+    
 };
 
 #[derive(Accounts)]
@@ -25,9 +26,8 @@ pub struct CreateBondingCurve<'info> {
     #[account(
         init,
         payer = creator,
-        mint::decimals = global.mint_decimals,
-        mint::authority = dao_proposal, // Change authority to dao_proposal
-        mint::freeze_authority = dao_proposal, // Keep freeze authority with bonding curve for now,
+        mint::decimals = params.token_decimals,
+        mint::authority = bonding_curve,
         seeds = [
             BondingCurve::TOKEN_PREFIX.as_bytes(),
             params.name.as_bytes(),
@@ -35,34 +35,46 @@ pub struct CreateBondingCurve<'info> {
         ],
         bump
     )]
-    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    pub token_mint: Box<InterfaceAccount<'info, Mint>>,
 
+    #[account(
+        mut,
+        constraint = base_mint.decimals == params.base_decimals @ ContractError::InvalidBaseMint,
+    )]
+    pub base_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(mut)]
     pub creator: Signer<'info>,
 
     #[account(
         init,
         payer = creator,
-        seeds = [BondingCurve::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
+        seeds = [BondingCurve::SEED_PREFIX.as_bytes(), token_mint.to_account_info().key.as_ref()],
         bump,
         space = 8 + BondingCurve::INIT_SPACE
     )]
     pub bonding_curve: Box<Account<'info, BondingCurve>>,
 
     #[account(
+        mut,
+        seeds = [BondingCurve::VAULT_PREFIX.as_bytes(), token_mint.key().as_ref()],
+        bump,
+    )]
+    pub bonding_curve_vault: SystemAccount<'info>,
+
+    #[account(
         init,
         payer = creator,
-        seeds = [DAOProposal::SEED_PREFIX.as_bytes(), mint.to_account_info().key.as_ref()],
+        seeds = [Proposal::SEED_PREFIX.as_bytes(), token_mint.key().as_ref()],
         bump,
-        space = 8 + DAOProposal::INIT_SPACE
+        space = 8 + Proposal::INIT_SPACE
     )]
-    pub dao_proposal: Box<Account<'info, DAOProposal>>,
+    pub proposal: Box<Account<'info, Proposal>>,
 
     #[account(
         init_if_needed,
         payer = creator,
-        associated_token::mint = mint,
-        associated_token::authority = bonding_curve
+        associated_token::mint = token_mint,
+        associated_token::authority = bonding_curve_vault
     )]
     bonding_curve_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
@@ -74,7 +86,16 @@ pub struct CreateBondingCurve<'info> {
     )]
     global: Box<Account<'info, Global>>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        seeds = [
+            b"metadata",
+            token_metadata_program.key().as_ref(),
+            token_mint.key().as_ref()
+        ],
+        bump,
+        seeds::program = token_metadata_program.key()
+    )]
     ///CHECK: Using seed to validate metadata account
     metadata: UncheckedAccount<'info>,
 
@@ -86,7 +107,6 @@ pub struct CreateBondingCurve<'info> {
 }
 
 impl<'info> CreateBondingCurve<'info> {
-
     pub fn process(
         &mut self,
         params: CreateBondingCurveParams,
@@ -94,56 +114,57 @@ impl<'info> CreateBondingCurve<'info> {
     ) -> Result<()> {
         let clock = Clock::get()?;
 
-        // Initialize the DAOProposal
-        self.initialize_dao_proposal(&params, bumps.dao_proposal)?;
+        // Initialize the Proposal
+        self.initialize_proposal(&params, bumps.proposal)?;
 
         // Then update the bonding curve
         self.bonding_curve.update_from_params(
-            self.mint.key(),
-            *self.creator.key,
-            &self.global,
+            self.token_mint.key(),
+            self.base_mint.key(),
+            self.creator.key(),
             &params,
             &clock,
-            bumps.bonding_curve
+            bumps.bonding_curve,
+            bumps.bonding_curve_vault
         );
 
         // Initialize metadata and mint tokens
         self.initialize_meta(&params)?;
 
-        // Use dao_proposal as the mint authority
-        let mint_authority_seeds = self.dao_proposal.get_signer_seeds();
+        let mint_authority_seeds = self.bonding_curve.get_signer_seeds();
         let mint_auth_signer_seeds: &[&[&[u8]]] = &[&mint_authority_seeds];
         mint_to(
             CpiContext::new_with_signer(
                 self.token_program.to_account_info(),
                 MintTo {
-                    authority: self.dao_proposal.to_account_info(),
+                    authority: self.bonding_curve.to_account_info(),
                     to: self.bonding_curve_token_account.to_account_info(),
-                    mint: self.mint.to_account_info(),
+                    mint: self.token_mint.to_account_info(),
                 },
                 mint_auth_signer_seeds
             ),
             self.bonding_curve.token_total_supply
         )?;
+        self.init_bonding_curve_vault()?;
         Ok(())
     }
 
-    // New method to initialize the DAO proposal
-    fn initialize_dao_proposal(
+    fn initialize_proposal(
         &mut self,
         params: &CreateBondingCurveParams,
         dao_proposal_bump: u8
     ) -> Result<()> {
-        // Initialize DAO proposal with provided parameters
-        self.dao_proposal.set_inner(DAOProposal {
-            mint: self.mint.key(),
+        // Initialize proposal with provided parameters
+        self.proposal.set_inner(Proposal {
+            mint: self.token_mint.key(),
             creator: *self.creator.key,
-            name: params.dao_name.clone(),
-            description: params.dao_description.clone(),
-            realm_address: params.realm_address.clone(),
+            name: params.name.clone(),
+            description: params.description.clone(),
             twitter_handle: params.twitter_handle.clone(),
+            treasury_address: params.treasury_address.clone(),
             discord_link: params.discord_link.clone(),
             website_url: params.website_url.clone(),
+            authority_address: params.authority_address.clone(),
             logo_uri: params.logo_uri.clone(),
             founder_name: params.founder_name.clone(),
             founder_twitter: params.founder_twitter.clone(),
@@ -154,18 +175,11 @@ impl<'info> CreateBondingCurve<'info> {
     }
 
     fn initialize_meta(&mut self, params: &CreateBondingCurveParams) -> Result<()> {
-        let mint_info = self.mint.to_account_info();
+        let mint_info = self.token_mint.to_account_info();
         let metadata_info = self.metadata.to_account_info();
-        let mint_key = mint_info.key;
-        // Use dao_proposal as the mint and update authority
-        let mint_authority_info = self.dao_proposal.to_account_info();
-
-        let dao_signer = [
-            DAOProposal::SEED_PREFIX.as_bytes(),
-            mint_key.as_ref(),
-            &[self.dao_proposal.bump],
-        ];
-        let dao_auth_signer_seeds = &[&dao_signer[..]];
+        let mint_authority_info = self.bonding_curve.to_account_info();
+        let mint_auth_signer_seeds = self.bonding_curve.get_signer_seeds();
+        let mint_auth_signer = &[&mint_auth_signer_seeds[..]];
 
         let token_data: DataV2 = DataV2 {
             name: params.name.clone(),
@@ -188,11 +202,28 @@ impl<'info> CreateBondingCurve<'info> {
                 system_program: self.system_program.to_account_info(),
                 rent: self.rent.to_account_info(),
             },
-            dao_auth_signer_seeds
+            mint_auth_signer
         );
 
         create_metadata_accounts_v3(metadata_ctx, token_data, false, true, None)?;
-        msg!("CreateBondingCurve::intialize_meta: done");
+        Ok(())
+    }
+
+    fn init_bonding_curve_vault(&self) -> Result<()> {
+        let rent_exempt = Rent::get()?.minimum_balance(0);
+        let transfer_ix = system_instruction::transfer(
+            self.creator.to_account_info().key,
+            self.bonding_curve_vault.to_account_info().key,
+            rent_exempt
+        );
+        invoke(
+            &transfer_ix,
+            &[
+                self.creator.to_account_info(),
+                self.bonding_curve_vault.to_account_info(),
+                self.system_program.to_account_info(),
+            ]
+        )?;
         Ok(())
     }
 }

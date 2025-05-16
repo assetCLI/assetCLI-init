@@ -1,77 +1,49 @@
-import { Command } from "commander";
-import chalk from "chalk";
-import { ConfigService } from "../services/config-service";
-import { CLUSTERS, ENDPOINT_MAP } from "../utils/constants";
-import { Cluster } from "@solana/web3.js";
+// import { Command } from "commander";
+// import { ConfigService } from "../services/config-service";
+// import { NETWORK_MAP } from "../utils/constants";
+// import { displayConfig } from "../mcp/config-and-wallet";
 
-export function registerConfigCommands(program: Command): void {
-  const configCommand = program
-    .command("config")
-    .description("Configuration management commands");
+// export const configCommand = new Command("config")
+//   .description("Manage configuration settings")
+//   .addCommand(
+//     new Command("show")
+//       .description("Show current configuration")
+//       .action(async () => {
+//         await displayConfig();
+//       })
+//   )
+//   .addCommand(
+//     new Command("set-network")
+//       .description("Set the network configuration")
+//       .argument("<network>", "Network name (mainnet, devnet, testnet) or custom")
+//       .option("-u, --url <url>", "Custom RPC URL (required for custom network)")
+//       .action(async (network: string, options: { url?: string }) => {
+//         if (!NETWORK_MAP[network] && !options.url) {
+//           console.error("Error: Custom RPC URL is required for custom networks");
+//           process.exit(1);
+//         }
 
-  configCommand
-    .command("show")
-    .description("Display current configuration")
-    .action(async () => {
-      try {
-        const configResponse = await ConfigService.getConfig();
+//         const response = await ConfigService.setNetwork(network, options.url);
+//         if (!response.success) {
+//           console.error("Error:", response.error?.message);
+//           process.exit(1);
+//         }
 
-        if (!configResponse.success || !configResponse.data) {
-          console.error(
-            chalk.red("Failed to load configuration:"),
-            configResponse.error?.message || "Unknown error"
-          );
-          return;
-        }
-
-        console.log(chalk.blue("Configuration:"));
-        console.log(JSON.stringify(configResponse.data, null, 2));
-      } catch (error) {
-        console.error(chalk.red("Failed to load configuration:"), error);
-      }
-    });
-
-  configCommand
-    .command("set-cluster")
-    .description("Set the Solana cluster")
-    .argument("<cluster>", `Cluster name: ${Object.keys(CLUSTERS).join(", ")}`)
-    .option("-e, --endpoint <string>", "Custom RPC endpoint URL")
-    .action(async (clusterName, options) => {
-      try {
-        if (!CLUSTERS[clusterName]) {
-          console.error(
-            chalk.red(
-              `Invalid cluster. Choose from: ${Object.keys(CLUSTERS).join(
-                ", "
-              )}`
-            )
-          );
-          return;
-        }
-
-        const cluster = CLUSTERS[clusterName] as Cluster;
-        const endpoint = options.endpoint || ENDPOINT_MAP[cluster];
-
-        const configResponse = await ConfigService.setCluster(
-          cluster,
-          endpoint
-        );
-
-        if (!configResponse.success) {
-          console.error(
-            chalk.red("Failed to set cluster:"),
-            configResponse.error?.message || "Unknown error"
-          );
-          return;
-        }
-
-        console.log(
-          chalk.green(
-            `✓ Cluster set to ${clusterName} with endpoint: ${endpoint}`
-          )
-        );
-      } catch (error) {
-        console.error(chalk.red("Failed to set cluster:"), error);
-      }
-    });
-}
+//         console.log(`Network set to ${network}`);
+//         if (options.url) {
+//           console.log(`Custom RPC URL: ${options.url}`);
+//         }
+//       })
+//   )
+//   .addCommand(
+//     new Command("reset")
+//       .description("Reset configuration to defaults")
+//       .action(async () => {
+//         const response = await ConfigService.resetConfig();
+//         if (!response.success) {
+//           console.error("Error:", response.error?.message);
+//           process.exit(1);
+//         }
+//         console.log("Configuration reset to defaults");
+//       })
+//   );

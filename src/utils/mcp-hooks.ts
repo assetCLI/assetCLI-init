@@ -2,11 +2,13 @@ import { PublicKey } from "@solana/web3.js";
 import { WalletService } from "../services/wallet-service";
 import { ConnectionService } from "../services/connection-service";
 import { ConfigService } from "../services/config-service";
+import { Connection } from "@solana/web3.js";
+import { Keypair } from "@solana/web3.js";
+import { Config } from "../types";
 
 type McpHookOptions = {
   requireWallet?: boolean;
   requireConfig?: boolean;
-  requireDao?: boolean;
   requireMultisig?: boolean;
 };
 
@@ -14,10 +16,9 @@ type McpHookResult = {
   success: boolean;
   error?: string;
   suggestion?: string;
-  connection?: any;
-  keypair?: any;
-  config?: any;
-  realmAddress?: PublicKey | undefined;
+  connection?: Connection | undefined;
+  keypair?: Keypair | undefined;
+  config?: Config | undefined;
   multisigAddress?: PublicKey | undefined;
 };
 
@@ -31,7 +32,6 @@ export async function useMcpContext(
   const {
     requireWallet = true,
     requireConfig = true,
-    requireDao = false,
     requireMultisig = false,
   } = options;
 
@@ -42,7 +42,7 @@ export async function useMcpContext(
       success: false,
       error: "Failed to establish connection",
       suggestion:
-        "Use 'setCluster' command to set a valid cluster (devnet, testnet, or mainnet)",
+        "Use 'setNetwork' command to set a valid network (devnet, testnet, or mainnet)",
     };
   }
   const connection = connectionRes.data;
@@ -76,20 +76,6 @@ export async function useMcpContext(
     config = configRes.data;
   }
 
-  // Check for DAO if required
-  let realmAddress = undefined;
-  if (requireDao) {
-    if (!config?.dao?.activeRealm) {
-      return {
-        success: false,
-        error: "No DAO configured.",
-        suggestion:
-          "Use 'createDao' to create a new DAO or 'useDao' to select an existing one. You can also use 'listDaos' to see available DAOs.",
-      };
-    }
-    realmAddress = new PublicKey(config.dao.activeRealm);
-  }
-
   // Check for standalone multisig if required
   let multisigAddress = undefined;
   if (requireMultisig) {
@@ -110,22 +96,27 @@ export async function useMcpContext(
     connection,
     keypair,
     config,
-    realmAddress,
     multisigAddress,
   };
 }
 
-/**
- * Helper function to create standardized MCP error responses
- * with optional suggestions
- */
+export function mcpText(text: string, suggestion?: string) {
+  let fullText = text;
+  if (suggestion) {
+    fullText += `\n\nSuggestion: ${suggestion}`;
+  }
+  return {
+    content: [{ type: "text" as const, text: fullText }],
+  };
+}
+
 export function mcpError(message: string, suggestion?: string) {
   let text = message;
   if (suggestion) {
     text += `\n\nSuggestion: ${suggestion}`;
   }
-
   return {
-    content: [{ type: "text", text }],
+    content: [{ type: "text" as const, text }],
+    isError: true,
   };
 }

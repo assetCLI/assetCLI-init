@@ -259,4 +259,91 @@ export function registerTestTokenTools(server: McpServer) {
       }
     }
   );
+
+  server.tool(
+    "getTestUSDC",
+    "Get test USDC. Only valid for localnet.",
+    {},
+    async () => {
+      try {
+        const context = await useMcpContext({
+          requireWallet: true,
+        });
+
+        if (!context.success || !context.connection || !context.keypair) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: context.error || "Failed to get context",
+              },
+            ],
+          };
+        }
+
+        const { connection, keypair } = context;
+
+        const mint = new PublicKey(
+          "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        );
+
+        const mintInfo = await getMint(connection, mint);
+        if (!mintInfo) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Mint not found",
+              },
+            ],
+          };
+        }
+
+        const receipientTokenAccount = await getOrCreateAssociatedTokenAccount(
+          connection,
+          keypair,
+          mint,
+          keypair.publicKey,
+          true
+        );
+
+        const tx = await mintTo(
+          connection,
+          keypair,
+          mint,
+          receipientTokenAccount.address,
+          keypair.publicKey,
+          1000000 * 10 ** 6
+        );
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  mint: mint.toBase58(),
+                  receipientTokenAccount:
+                    receipientTokenAccount.address.toBase58(),
+                  amountInReceipientTokenAccount:
+                    receipientTokenAccount.amount.toString(),
+                  transaction: tx,
+                },
+                null,
+                2
+              ),
+            },
+            {
+              type: "text",
+              text: "\n\nCAUTION: This is a test token. Never use this in mainnet or mainnet rpc URL",
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Error: ${error}}` }],
+        };
+      }
+    }
+  );
 }

@@ -80,24 +80,36 @@ export class PeranaService {
               PRODUCTION_POOLS[params.pool as keyof typeof PRODUCTION_POOLS]
             )
           : params.pool;
+      
+      
 
       // Call swap function from SDK
-      const { call } = await swapExactIn({
-        pool: poolAddress,
-        in: params.inToken,
-        out: params.outToken,
-        exactAmountIn: params.exactAmountIn,
-        minAmountOut: params.minAmountOut,
-        cuLimit: params.cuLimit || 1500000,
-      });
+      try {
+        const { call } = await swapExactIn({
+          pool: poolAddress,
+          in: params.inToken,
+          out: params.outToken,
+          exactAmountIn: params.exactAmountIn,
+          minAmountOut: params.minAmountOut,
+          cuLimit: params.cuLimit || 1500000,
+        });
 
-      // Execute swap and return transaction signature
-      const txSignature = await call.rpc();
+        // Execute swap and return transaction signature
+        const txSignature = await call.rpc();
 
-      return {
-        success: true,
-        data: txSignature,
-      };
+        return {
+          success: true,
+          data: txSignature,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: {
+            message: "Swap failed rpc failed",
+            details: error,
+          },
+        };
+      }
     } catch (error) {
       return {
         success: false,
